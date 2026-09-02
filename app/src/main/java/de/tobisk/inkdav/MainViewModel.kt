@@ -10,6 +10,8 @@ import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.SyncWorker
 import de.tobisk.inkdav.tasks.RecurringTaskProjector
+import de.tobisk.inkdav.update.AppUpdater
+import de.tobisk.inkdav.update.UpdateState
 import de.tobisk.inkdav.widgets.WidgetUpdater
 import java.time.*
 import java.time.temporal.TemporalAdjusters
@@ -32,6 +34,7 @@ enum class TaskMode { LISTS, SCHEDULE }
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as InkDavApplication).container
     private val dao = container.database.dao()
+    private val appUpdater = AppUpdater(application)
 
     val destination = MutableStateFlow(Destination.CALENDAR)
     val selectedDate = MutableStateFlow(LocalDate.now())
@@ -44,6 +47,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val editingEvent = MutableStateFlow<CalendarEventEntity?>(null)
     val editingOccurrence = MutableStateFlow<CalendarOccurrenceEntity?>(null)
     val editingTask = MutableStateFlow<DavTaskEntity?>(null)
+    val updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
 
     val accounts = dao.observeAccounts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val collections = dao.observeCollections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -72,6 +76,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun sync() = SyncWorker.enqueue(getApplication())
+
+    fun currentAppVersion(): String = appUpdater.currentVersion()
+
+    fun checkForUpdates() {
+        if (updateState.value is UpdateState.Checking || updateState.value is UpdateState.Downloading) return
+        viewModelScope.launch {
+            updateState.value = UpdateState.Checking
+            updateState.value = runCatching {
+                val release = appUpdater.latestRelease()
+                if (!appUpdater.isNewer(release.version)) {
+                    UpdateState.UpToDate(appUpdater.currentVersion())
+                } else {
+                    updateState.value = UpdateState.Downloading(release.version, 0, -1)
+                    val apk = appUpdater.download(release) { received, total ->
+                        updateState.value = UpdateState.Downloading(release.version, received, total)
+                    }
+                    UpdateState.Ready(release.version, apk.absolutePath)
+                }
+            }.getOrElse { error ->
+                UpdateState.Error(error.message ?: "The update check failed.")
+            }
+        }
+    }
+
+    fun markUpdateInstallPrompted(apkPath: String) {
+        val ready = updateState.value as? UpdateState.Ready ?: return
+        if (ready.apkPath == apkPath) updateState.value = ready.copy(installPrompted = true)
+    }
 
     fun resolveEventConflict(event: CalendarEventEntity, keepBoth: Boolean) = viewModelScope.launch {
         if (keepBoth) {

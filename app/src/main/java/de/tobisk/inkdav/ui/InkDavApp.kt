@@ -23,6 +23,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +36,9 @@ import de.tobisk.inkdav.*
 import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.tasks.ScheduleBucketer
+import de.tobisk.inkdav.update.InstallUpdateResult
+import de.tobisk.inkdav.update.UpdateInstaller
+import de.tobisk.inkdav.update.UpdateState
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
@@ -921,6 +925,37 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
     var showAccount by remember { mutableStateOf(false) }
     var credentialAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     var removalAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
+    val updateState by model.updateState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val installedVersion = remember { model.currentAppVersion() }
+    var installMessage by remember { mutableStateOf<String?>(null) }
+    val unknownSourcesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val ready = model.updateState.value as? UpdateState.Ready ?: return@rememberLauncherForActivityResult
+        installMessage = when (val result = UpdateInstaller.install(context, ready.apkPath)) {
+            InstallUpdateResult.InstallerOpened -> "Android's installer is ready. Confirm the update there."
+            InstallUpdateResult.PermissionRequired -> "Installation permission was not enabled. You can retry below."
+            is InstallUpdateResult.Rejected -> result.reason
+        }
+    }
+
+    fun install(ready: UpdateState.Ready) {
+        installMessage = when (val result = UpdateInstaller.install(context, ready.apkPath)) {
+            InstallUpdateResult.InstallerOpened -> "Android's installer is ready. Confirm the update there."
+            InstallUpdateResult.PermissionRequired -> {
+                unknownSourcesLauncher.launch(UpdateInstaller.unknownSourcesIntent(context))
+                "Allow InkDAV to install updates, then return to continue."
+            }
+            is InstallUpdateResult.Rejected -> result.reason
+        }
+    }
+
+    LaunchedEffect(updateState) {
+        val ready = updateState as? UpdateState.Ready
+        if (ready != null && !ready.installPrompted) {
+            model.markUpdateInstallPrompted(ready.apkPath)
+            install(ready)
+        }
+    }
     Column(
         Modifier.fillMaxSize().padding(16.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -954,6 +989,38 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 InkButton("− future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths - 6) }
                 InkButton("+ future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths + 6) }
             }
+        }
+        SettingPanel("Application updates") {
+            Text("Installed version $installedVersion")
+            when (val state = updateState) {
+                UpdateState.Idle -> Text("Updates are downloaded from the official InkDAV GitHub release.", color = MutedInk)
+                UpdateState.Checking -> Text("Checking GitHub for the latest release…")
+                is UpdateState.Downloading -> {
+                    val progress = if (state.totalBytes > 0) {
+                        "${state.bytesRead * 100 / state.totalBytes}%"
+                    } else {
+                        "${state.bytesRead / 1024} KiB"
+                    }
+                    Text("Downloading and verifying v${state.version}: $progress")
+                }
+                is UpdateState.Ready -> {
+                    Text("Version ${state.version} is downloaded and verified.")
+                    InkButton("Install v${state.version}") { install(state) }
+                }
+                is UpdateState.UpToDate -> Text("Version ${state.version} is the latest release.")
+                is UpdateState.Error -> Text("Update failed: ${state.message}", color = Warning)
+            }
+            if (updateState !is UpdateState.Checking && updateState !is UpdateState.Downloading) {
+                InkButton("Check for updates") {
+                    installMessage = null
+                    model.checkForUpdates()
+                }
+            }
+            installMessage?.let { Text(it, color = MutedInk) }
+            Text(
+                "InkDAV verifies the release checksum, application ID, version code, and release signature before Android opens the installer.",
+                color = MutedInk
+            )
         }
         SettingPanel("Color e-ink") {
             Text(

@@ -19,6 +19,7 @@ The UI uses opaque paper-colored surfaces, strong outlines, redundant text statu
 - Android `DocumentsProvider` integration so other apps can browse indexed files and open cached or streamed content through the system file picker.
 - Resizable task and calendar home-screen widgets. Task widgets can show one selected list or an upcoming window of 1–30 days while excluding selected lists; calendar widgets show the next occurrences. Row counts adapt to launcher-selected widget height.
 - Adjustable past/future calendar cache window and e-ink settings.
+- A Settings updater that checks official GitHub releases, verifies the APK checksum and signing identity, and opens Android's installer.
 
 ## Build
 
