@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/kellertobias/[secure]/compare/v1.2.1...v1.3.0) (2026-09-02)
+
+### Features
+
+* support storage root and repair DAV setup ([7932707](https://github.com/kellertobias/[secure]/commit/79327075053f9b541935926cfbebe4608d54840a))
+
 ## [1.2.1](https://github.com/kellertobias/[secure]/compare/v1.2.0...v1.2.1) (2026-09-02)
 
 ### Bug Fixes
