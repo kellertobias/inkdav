@@ -12,8 +12,8 @@
     }],
     ["@semantic-release/github", {
       "assets": [
-        {"path": "dist/InkDAV-v${nextRelease.version}-boox-note-air5c.apk", "label": "InkDAV v${nextRelease.version} for BOOX Note Air5 C (signed APK)"},
-        {"path": "dist/InkDAV-v${nextRelease.version}-boox-note-air5c.apk.sha256", "label": "SHA-256 checksum"}
+        {"path": "dist/InkDAV-v*-boox-note-air5c.apk", "label": "InkDAV v<%= nextRelease.version %> for BOOX Note Air5 C (signed APK)"},
+        {"path": "dist/InkDAV-v*-boox-note-air5c.apk.sha256", "label": "SHA-256 checksum"}
       ]
     }]
   ]
