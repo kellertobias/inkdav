@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/kellertobias/[secure]/compare/v1.2.0...v1.2.1) (2026-09-02)
+
+### Bug Fixes
+
+* add status strip and trim month rows ([9db364c](https://github.com/kellertobias/[secure]/commit/9db364cacc931ea71617227c54f739f226048be2))
+
 ## [1.2.0](https://github.com/kellertobias/[secure]/compare/v1.1.0...v1.2.0) (2026-09-02)
 
 ### Features
