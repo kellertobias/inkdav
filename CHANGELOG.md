@@ -1,3 +1,9 @@
+## [1.3.3](https://github.com/kellertobias/[secure]/compare/v1.3.2...v1.3.3) (2026-09-02)
+
+### Bug Fixes
+
+* draw a high contrast system bar background ([0ba3358](https://github.com/kellertobias/[secure]/commit/0ba3358f985e27305405a3909b0ddadbb1d61d95))
+
 ## [1.3.2](https://github.com/kellertobias/[secure]/compare/v1.3.1...v1.3.2) (2026-09-02)
 
 ### Bug Fixes
