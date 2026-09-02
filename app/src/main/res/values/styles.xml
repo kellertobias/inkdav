@@ -2,10 +2,10 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.InkDAV" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
         <item name="android:windowFullscreen">false</item>
-        <item name="android:statusBarColor">#FAF9F4</item>
+        <item name="android:statusBarColor">#111111</item>
         <item name="android:navigationBarColor">#FAF9F4</item>
         <item name="android:colorAccent">#243B53</item>
         <item name="android:windowActionModeOverlay">true</item>

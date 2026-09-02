@@ -15,10 +15,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val paper = 0xfffaf9f4.toInt()
+        val ink = 0xff111111.toInt()
         window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        window.statusBarColor = paper
+        window.statusBarColor = ink
         window.navigationBarColor = paper
         showSystemBars()
         setContent { InkDavApp(viewModel()) }
@@ -36,7 +37,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showSystemBars() {
         WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightStatusBars = true
+            isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = true
             show(WindowInsetsCompat.Type.systemBars())
         }

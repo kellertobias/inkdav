@@ -9,7 +9,6 @@ import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.media.MediaPlayer
 import android.net.Uri
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
@@ -115,7 +114,6 @@ fun InkDavApp(model: MainViewModel) {
         )
     ) {
         Column(Modifier.fillMaxSize().background(Paper).safeDrawingPadding()) {
-            InkStatusBar()
             TopNavigation(destination) { model.destination.value = it }
             if (destination == Destination.CALENDAR) {
                 CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts)
@@ -163,43 +161,6 @@ fun InkDavApp(model: MainViewModel) {
         )
     }
     editingTask?.let { EditTaskDialog(it, { model.editingTask.value = null }, model::updateTask, model::deleteTask) }
-}
-
-@Composable
-private fun InkStatusBar() {
-    val context = LocalContext.current
-    val battery = remember(context) { context.getSystemService(BatteryManager::class.java) }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val current = System.currentTimeMillis()
-            now = current
-            delay(60_000L - current % 60_000L)
-        }
-    }
-    val dateTime = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault())
-    val batteryPercent = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
-    val charging = battery?.isCharging == true
-    Row(
-        Modifier.fillMaxWidth().height(34.dp).background(Paper).border(1.dp, Ink).padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("InkDAV", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(12.dp))
-        Text(dateTime.format(DateTimeFormatter.ofPattern("EEE, d MMM")), fontSize = 13.sp, color = MutedInk)
-        Spacer(Modifier.weight(1f))
-        Text(
-            buildString {
-                if (charging) append("CHG  ")
-                append("BAT ")
-                append(batteryPercent?.let { "$it%" } ?: "—")
-            },
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(Modifier.width(18.dp))
-        Text(dateTime.format(DateTimeFormatter.ofPattern("HH:mm")), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-    }
 }
 
 @Composable

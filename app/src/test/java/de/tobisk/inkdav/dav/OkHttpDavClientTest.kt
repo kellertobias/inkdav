@@ -58,4 +58,22 @@ class OkHttpDavClientTest {
 
         assertFalse(OkHttpDavClient().parseMultiStatus(xml.byteInputStream(), KXmlParser()).resources.single().deleted)
     }
+
+    @Test
+    fun `nested principal href does not contaminate response href`() {
+        val xml = """<d:multistatus xmlns:d="DAV:">
+            <d:response>
+              <d:href>/dav/calendars/user/personal/</d:href>
+              <d:propstat><d:prop>
+                <d:displayname>Personal</d:displayname>
+                <d:owner><d:href>dav/principals/user/</d:href></d:owner>
+              </d:prop></d:propstat>
+            </d:response>
+          </d:multistatus>"""
+
+        val resource = OkHttpDavClient().parseMultiStatus(xml.byteInputStream(), KXmlParser()).resources.single()
+
+        assertEquals("/dav/calendars/user/personal/", resource.href)
+        assertEquals("Personal", resource.displayName)
+    }
 }

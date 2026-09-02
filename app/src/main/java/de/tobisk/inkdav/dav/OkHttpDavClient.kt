@@ -298,12 +298,14 @@ class OkHttpDavClient(
                         syncToken = (syncToken.orEmpty() + parser.text).trim()
                     } else if (response != null) {
                         val key = when {
+                            currentTag == "href" && parentTag == "response" -> "href"
                             currentTag == "href" && parentTag == "current-user-principal" -> "current-user-principal"
                             currentTag == "href" && parentTag == "calendar-home-set" -> "calendar-home-set"
+                            currentTag == "href" -> null
                             currentTag == "status" && parentTag == "response" -> "response-status"
                             else -> currentTag
                         }
-                        response[key] = (response[key].orEmpty() + parser.text).trim()
+                        key?.let { response[it] = (response[it].orEmpty() + parser.text).trim() }
                     }
                 }
                 XmlPullParser.END_TAG -> {
