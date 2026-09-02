@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="42dp" android:orientation="horizontal"
+    android:gravity="center_vertical" android:paddingHorizontal="6dp" android:background="#FAF9F4">
+    <TextView android:id="@+id/widget_mark" android:layout_width="28dp" android:layout_height="match_parent"
+        android:gravity="center" android:textColor="#294C60" android:textStyle="bold" android:textSize="17sp" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_primary" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textColor="#111111" android:textStyle="bold" android:textSize="15sp" />
+        <TextView android:id="@+id/widget_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textColor="#4B5563" android:textSize="12sp" />
+    </LinearLayout>
+</LinearLayout>
+
