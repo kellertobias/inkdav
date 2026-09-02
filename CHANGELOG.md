@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/kellertobias/[secure]/compare/v1.1.0...v1.2.0) (2026-09-02)
+
+### Features
+
+* improve calendar tasks and local files ([f2948f6](https://github.com/kellertobias/[secure]/commit/f2948f60beefc1cbe10351f66edd10b685d586f3))
+
 ## [1.1.0](https://github.com/kellertobias/[secure]/compare/v1.0.1...v1.1.0) (2026-09-02)
 
 ### Features
