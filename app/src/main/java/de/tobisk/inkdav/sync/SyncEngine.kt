@@ -5,6 +5,7 @@ import de.tobisk.inkdav.dav.DavClient
 import de.tobisk.inkdav.dav.DavHttpException
 import de.tobisk.inkdav.dav.IcalendarCodec
 import de.tobisk.inkdav.dav.RecurrenceProjector
+import de.tobisk.inkdav.dav.normalizeDavBaseUrl
 import de.tobisk.inkdav.files.MirrorSyncEngine
 import de.tobisk.inkdav.security.CredentialStore
 import de.tobisk.inkdav.settings.UserPreferences
@@ -34,7 +35,9 @@ class SyncEngine(
             runCatching { synchronize(account, includeFiles) }.isSuccess
         }.all { it }
 
-    suspend fun synchronize(account: DavAccountEntity, includeFiles: Boolean = true) {
+    suspend fun synchronize(storedAccount: DavAccountEntity, includeFiles: Boolean = true) {
+        val account = storedAccount.copy(baseUrl = normalizeDavBaseUrl(storedAccount.baseUrl, storedAccount.kind))
+        if (account.baseUrl != storedAccount.baseUrl) dao.upsertAccount(account.copy(lastSyncError = null))
         val password = credentials.get(account.id) ?: error("Credentials unavailable")
         try {
             drainOutbox(account, password)

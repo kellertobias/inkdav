@@ -12,6 +12,8 @@ DAV passwords or device secrets are AES-GCM encrypted with a non-exportable Andr
 
 A user-selected physical mirror is intentionally outside the private app sandbox. Files in that folder inherit the storage provider's access rules and may be visible to other apps with user-granted access. Files exposed through InkDAV's `DocumentsProvider` are shared only through Android's system document-picker grants.
 
+The optional "Use device root" local-browser mode requests Android's all-files access because Android 11 and newer prevent the ordinary folder picker from selecting the shared-storage root. This gives InkDAV read access across shared device storage; it is never requested for a narrower user-selected folder. Opening a local file externally grants the receiving app access only to that selected file through a non-exported `FileProvider`.
+
 InkDAV contains no analytics, advertising SDK, telemetry service, or public-link sharing. It connects only to DAV endpoints configured by the user.
 
 ## Network and credential boundary

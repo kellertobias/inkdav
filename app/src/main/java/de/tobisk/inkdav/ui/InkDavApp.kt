@@ -1,5 +1,8 @@
 package de.tobisk.inkdav.ui
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -7,6 +10,9 @@ import android.graphics.pdf.PdfRenderer
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -42,6 +48,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.tobisk.inkdav.*
 import de.tobisk.inkdav.R
@@ -1112,6 +1119,8 @@ private fun LocalFilesPane(model: MainViewModel, settings: InkDavSettings, modif
             InkButton(if (settings.localFilesRootUri == null) "Choose root" else "Change root") {
                 picker.launch(settings.localFilesRootUri?.let(Uri::parse))
             }
+            Spacer(Modifier.width(8.dp))
+            DeviceStorageRootButton(model)
         }
         error?.let { Text(it, modifier = Modifier.fillMaxWidth().border(2.dp, Warning).padding(10.dp), color = Warning) }
         if (settings.localFilesRootUri == null) {
@@ -1540,8 +1549,13 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 InkButton(if (settings.localFilesRootUri == null) "Choose local root" else "Change local root") {
                     localRootPicker.launch(settings.localFilesRootUri?.let(Uri::parse))
                 }
+                DeviceStorageRootButton(model)
                 if (settings.localFilesRootUri != null) InkButton("Remove local root") { model.clearLocalFilesRoot() }
             }
+            Text(
+                "Device storage root requires Android's all-files access. InkDAV uses it only for the local file browser and grants external apps access one selected file at a time.",
+                color = MutedInk
+            )
         }
     }
     if (showAccount) AccountEditor({ showAccount = false }, model::addAccount)
@@ -1636,11 +1650,44 @@ private fun AccountEditor(close: () -> Unit, save: (String, String, String, Char
                     password.isNotEmpty()
                 ) {
                     save(name, url, user, password.toCharArray(), nas)
+                    close()
                 }
             }
         },
         dismissButton = { InkButton("Cancel", action = close) }
     )
+}
+
+@Composable
+private fun DeviceStorageRootButton(model: MainViewModel) {
+    val context = LocalContext.current
+    val allFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()) {
+            model.useDeviceStorageRoot()
+        }
+    }
+    val legacyReadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) model.useDeviceStorageRoot()
+    }
+    InkButton("Use device root") {
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager() -> {
+                model.useDeviceStorageRoot()
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                allFilesLauncher.launch(
+                    Intent(
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                )
+            }
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED -> {
+                model.useDeviceStorageRoot()
+            }
+            else -> legacyReadLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
 }
 
 @Composable

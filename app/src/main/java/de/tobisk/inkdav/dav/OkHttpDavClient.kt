@@ -238,7 +238,9 @@ class OkHttpDavClient(
         val builder = Request.Builder().url(url).method(method, xml.toRequestBody("application/xml; charset=utf-8".toMediaType()))
         headers.forEach(builder::header)
         execute(account, password, builder).use {
-            if (!it.isSuccessful && it.code != 207) throw DavHttpException(it.code, "$method failed (${it.code})")
+            if (!it.isSuccessful && it.code != 207) {
+                throw DavHttpException(it.code, "$method failed (${it.code}) at ${URI(url).rawPath}")
+            }
             parseMultiStatus(it.body.byteStream())
         }
     }

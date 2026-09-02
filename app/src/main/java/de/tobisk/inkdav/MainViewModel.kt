@@ -3,10 +3,13 @@ package de.tobisk.inkdav
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
 import android.provider.DocumentsContract
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.tobisk.inkdav.data.*
+import de.tobisk.inkdav.dav.normalizeDavBaseUrl
 import de.tobisk.inkdav.files.LocalFileBrowser
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.files.LocalFolderLocation
@@ -16,6 +19,7 @@ import de.tobisk.inkdav.tasks.RecurringTaskProjector
 import de.tobisk.inkdav.update.AppUpdater
 import de.tobisk.inkdav.update.UpdateState
 import de.tobisk.inkdav.widgets.WidgetUpdater
+import java.io.File
 import java.time.*
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
@@ -144,9 +148,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addAccount(name: String, baseUrl: String, username: String, password: CharArray, nasDrive: Boolean) {
         viewModelScope.launch {
             val id = UUID.randomUUID().toString()
-            val normalized = baseUrl.trim().let { if (it.endsWith('/')) it else "$it/" }
+            val kind = if (nasDrive) AccountKind.NASDRIVE else AccountKind.DAV
+            val normalized = normalizeDavBaseUrl(baseUrl, kind)
             dao.upsertAccount(
-                DavAccountEntity(id, name.trim(), normalized, username.trim(), if (nasDrive) AccountKind.NASDRIVE else AccountKind.DAV)
+                DavAccountEntity(id, name.trim(), normalized, username.trim(), kind)
             )
             container.credentials.put(id, password)
             WidgetUpdater.updateAll(getApplication())
@@ -287,19 +292,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         selectedMirrorParent.value = selectedMirrorParent.value.substringBeforeLast('/', "")
     }
     fun openLocalFile(uri: String, mimeType: String?) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
-            setDataAndType(Uri.parse(uri), mimeType ?: "application/octet-stream")
+        val application = getApplication<Application>()
+        val parsed = Uri.parse(uri)
+        val viewUri = if (parsed.scheme == "file") {
+            FileProvider.getUriForFile(application, "${application.packageName}.updates", File(requireNotNull(parsed.path)))
+        } else {
+            parsed
+        }
+        val intent = Intent(Intent.ACTION_VIEW, viewUri).apply {
+            setDataAndType(viewUri, mimeType ?: "application/octet-stream")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching { getApplication<Application>().startActivity(intent) }
+        runCatching { application.startActivity(intent) }
+    }
+
+    @Suppress("DEPRECATION")
+    fun useDeviceStorageRoot() = viewModelScope.launch {
+        val uri = Uri.fromFile(Environment.getExternalStorageDirectory()).toString()
+        container.preferences.setLocalFilesRoot(uri)
+        loadLocalRoot(uri)
     }
 
     fun setLocalFilesRoot(uri: Uri) = viewModelScope.launch {
         val resolver = getApplication<Application>().contentResolver
         val oldRoot = settings.value.localFilesRootUri
-        resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (uri.scheme == "content") resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         container.preferences.setLocalFilesRoot(uri.toString())
-        if (oldRoot != null && oldRoot != uri.toString()) {
+        if (oldRoot != null && oldRoot != uri.toString() && Uri.parse(oldRoot).scheme == "content") {
             runCatching {
                 resolver.releasePersistableUriPermission(Uri.parse(oldRoot), Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -308,7 +327,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearLocalFilesRoot() = viewModelScope.launch {
-        settings.value.localFilesRootUri?.let { value ->
+        settings.value.localFilesRootUri?.takeIf { Uri.parse(it).scheme == "content" }?.let { value ->
             runCatching {
                 getApplication<Application>().contentResolver.releasePersistableUriPermission(
                     Uri.parse(value),
