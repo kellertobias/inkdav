@@ -1,3 +1,9 @@
+## [1.3.4](https://github.com/kellertobias/[secure]/compare/v1.3.3...v1.3.4) (2026-09-02)
+
+### Bug Fixes
+
+* normalize malformed CalDAV collection paths ([7e5ca45](https://github.com/kellertobias/[secure]/commit/7e5ca45998a12d2a19038a1ad6b638582e32926c))
+
 ## [1.3.3](https://github.com/kellertobias/[secure]/compare/v1.3.2...v1.3.3) (2026-09-02)
 
 ### Bug Fixes

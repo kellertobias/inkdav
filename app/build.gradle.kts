@@ -15,8 +15,8 @@ android {
         applicationId = "de.tobisk.inkdav"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1003003
-        versionName = "1.3.3"
+        versionCode = 1003004
+        versionName = "1.3.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
