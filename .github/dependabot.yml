@@ -7,10 +7,10 @@ updates:
     groups:
       android-dependencies:
         patterns: ["*"]
-        update-types: ["minor", "patch"]
+        update-types: ["patch"]
     ignore:
       - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: npm
     directory: "/"
     schedule:
@@ -18,14 +18,14 @@ updates:
     groups:
       release-tooling:
         patterns: ["*"]
-        update-types: ["minor", "patch"]
+        update-types: ["patch"]
     ignore:
       - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: monthly
     ignore:
       - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
