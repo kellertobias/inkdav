@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/kellertobias/[secure]/compare/v1.0.1...v1.1.0) (2026-09-02)
+
+### Features
+
+* add secure in-app updates ([99762ed](https://github.com/kellertobias/[secure]/commit/99762ed43357a2b16e95200076e4f32a9fae7d98))
+
 ## [1.0.1](https://github.com/kellertobias/[secure]/compare/v1.0.0...v1.0.1) (2026-09-02)
 
 ### Bug Fixes
