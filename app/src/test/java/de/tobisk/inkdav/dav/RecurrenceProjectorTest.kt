@@ -72,4 +72,38 @@ END:VCALENDAR"""
         assertEquals(listOf(9, 9, 9), occurrences.map { Instant.ofEpochMilli(it.startEpochMillis).atZone(zone).hour })
         assertFalse(occurrences.map { it.startEpochMillis }.zipWithNext().all { (a, b) -> b - a == 7 * 86_400_000L })
     }
+
+    @Test fun thisAndFutureMovesAndRenamesTheRemainingSeries() {
+        val raw = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+UID:future
+DTSTART;TZID=Europe/Berlin:20260902T090000
+DTEND;TZID=Europe/Berlin:20260902T100000
+RRULE:FREQ=WEEKLY;COUNT=4
+SUMMARY:Original
+END:VEVENT
+BEGIN:VEVENT
+UID:future
+RECURRENCE-ID;RANGE=THISANDFUTURE;TZID=Europe/Berlin:20260916T090000
+DTSTART;TZID=Europe/Berlin:20260916T110000
+DTEND;TZID=Europe/Berlin:20260916T123000
+SUMMARY:Changed
+END:VEVENT
+END:VCALENDAR"""
+        val zone = ZoneId.of("Europe/Berlin")
+        val occurrences = RecurrenceProjector.project(
+            "cal",
+            "/future.ics",
+            raw,
+            Instant.parse("2026-09-01T00:00:00Z").toEpochMilli(),
+            Instant.parse("2026-10-01T00:00:00Z").toEpochMilli(),
+            zone
+        )
+
+        assertEquals(listOf("Original", "Original", "Changed", "Changed"), occurrences.map { it.title })
+        assertEquals(listOf(9, 9, 11, 11), occurrences.map { Instant.ofEpochMilli(it.startEpochMillis).atZone(zone).hour })
+        assertEquals(90L, (occurrences.last().endEpochMillis - occurrences.last().startEpochMillis) / 60_000)
+    }
 }

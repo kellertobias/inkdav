@@ -8,6 +8,7 @@ import de.tobisk.inkdav.files.MirrorSyncEngine
 import de.tobisk.inkdav.security.CredentialStore
 import de.tobisk.inkdav.settings.UserPreferences
 import de.tobisk.inkdav.sync.SyncEngine
+import de.tobisk.inkdav.sync.SyncWorker
 
 class AppContainer(application: Application) {
     val database = InkDavDatabase.get(application)
@@ -22,4 +23,9 @@ class AppContainer(application: Application) {
 
 class InkDavApplication : Application() {
     val container by lazy { AppContainer(this) }
+
+    override fun onCreate() {
+        super.onCreate()
+        SyncWorker.schedulePeriodic(this)
+    }
 }

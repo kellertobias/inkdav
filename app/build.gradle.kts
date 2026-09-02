@@ -30,10 +30,26 @@ android {
 
     kotlinOptions { jvmTarget = "17" }
 
+    val releaseKeystore = System.getenv("INKDAV_KEYSTORE_FILE")
+    val releaseStorePassword = System.getenv("INKDAV_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("INKDAV_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("INKDAV_KEY_PASSWORD")
+    val hasReleaseSigning = listOf(releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
+
+    if (hasReleaseSigning) {
+        signingConfigs.create("release") {
+            storeFile = file(requireNotNull(releaseKeystore))
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
     packaging.resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*")
@@ -62,11 +78,15 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:5.1.0")
     implementation("org.mnode.ical4j:ical4j:4.3.0")
+    testImplementation("net.sf.kxml:kxml2:2.3.0")
     ksp("androidx.room:room-compiler:2.8.4")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.room:room-testing:2.8.4")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

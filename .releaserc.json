@@ -1,0 +1,20 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    ["@semantic-release/commit-analyzer", {"preset": "conventionalcommits"}],
+    ["@semantic-release/release-notes-generator", {"preset": "conventionalcommits"}],
+    ["@semantic-release/changelog", {"changelogFile": "CHANGELOG.md"}],
+    ["@semantic-release/exec", {"prepareCmd": "./scripts/build-release.sh ${nextRelease.version}"}],
+    ["@semantic-release/git", {
+      "assets": ["app/build.gradle.kts", "CHANGELOG.md"],
+      "message": "chore(release): v${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+    }],
+    ["@semantic-release/github", {
+      "assets": [
+        {"path": "dist/InkDAV-v${nextRelease.version}.apk", "label": "InkDAV v${nextRelease.version} signed APK"},
+        {"path": "dist/InkDAV-v${nextRelease.version}.apk.sha256", "label": "SHA-256 checksum"}
+      ]
+    }]
+  ]
+}

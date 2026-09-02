@@ -35,7 +35,16 @@ jobs:
         run: sdkmanager "platforms;android-36"
 
       - name: Verify and assemble
-        run: ./gradlew --no-daemon ktlintCheck testDebugUnitTest lintDebug assembleDebug
+        run: ./gradlew --no-daemon ktlintCheck testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease
+
+      - name: Run migration tests on Android
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: ./gradlew --no-daemon connectedDebugAndroidTest
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7

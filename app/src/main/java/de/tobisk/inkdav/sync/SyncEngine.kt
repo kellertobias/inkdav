@@ -23,35 +23,52 @@ class SyncEngine(
     private val offlineDirectory: File,
     private val mirrorSyncEngine: MirrorSyncEngine
 ) {
-    suspend fun synchronizeAll(): Boolean = dao.enabledAccounts().map { account ->
-        runCatching { synchronize(account) }.isSuccess
-    }.all { it }
+    private data class DiscoveredCollection(
+        val local: DavCollectionEntity,
+        val advertisedSyncToken: String?
+    )
 
-    suspend fun synchronize(account: DavAccountEntity) {
+    suspend fun synchronizeAll(includeFiles: Boolean = true): Boolean = dao.enabledAccounts()
+        .filter { includeFiles || it.kind != AccountKind.NASDRIVE }
+        .map { account ->
+            runCatching { synchronize(account, includeFiles) }.isSuccess
+        }.all { it }
+
+    suspend fun synchronize(account: DavAccountEntity, includeFiles: Boolean = true) {
         val password = credentials.get(account.id) ?: error("Credentials unavailable")
         try {
             drainOutbox(account, password)
             val discovered = dav.discoverCollections(account, password)
-            val collections = discovered.flatMap { remote ->
+            val existingCollections = dao.collections(account.id).associateBy { "${it.href}|${it.kind}" }
+            val discoveredCollections = discovered.flatMap { remote ->
                 buildList {
                     if (remote.isCalendar &&
                         remote.supportsEvents
                     ) {
                         add(
-                            collection(account, remote.href, remote.displayName, CollectionKind.CALENDAR, remote.syncToken, remote.ctag)
+                            discoveredCollection(
+                                account,
+                                remote.href,
+                                remote.displayName,
+                                CollectionKind.CALENDAR,
+                                remote.syncToken,
+                                remote.ctag,
+                                existingCollections
+                            )
                         )
                     }
                     if (remote.isCalendar &&
                         remote.supportsTasks
                     ) {
                         add(
-                            collection(
+                            discoveredCollection(
                                 account,
                                 remote.href,
                                 remote.displayName,
                                 CollectionKind.TASK_LIST,
                                 remote.syncToken,
-                                remote.ctag
+                                remote.ctag,
+                                existingCollections
                             )
                         )
                     }
@@ -59,33 +76,53 @@ class SyncEngine(
                         remote.isCollection
                     ) {
                         add(
-                            collection(
+                            discoveredCollection(
                                 account,
                                 remote.href,
                                 remote.displayName,
                                 CollectionKind.FILE_ROOT,
                                 remote.syncToken,
-                                remote.ctag
+                                remote.ctag,
+                                existingCollections
                             )
                         )
                     }
                 }
             }
-            dao.upsertCollections(collections)
+            dao.upsertCollections(discoveredCollections.map { it.local })
 
             val settings = preferences.settings.first()
             val now = ZonedDateTime.now(ZoneId.systemDefault())
             val from = now.minusDays(settings.calendarPastDays.toLong()).toInstant()
             val until = now.plusMonths(settings.calendarFutureMonths.toLong()).toInstant()
-            collections.forEach { collection ->
+            discoveredCollections.forEach { discoveredCollection ->
+                val collection = discoveredCollection.local
                 when (collection.kind) {
-                    CollectionKind.CALENDAR -> pullCalendar(account, password, collection, "VEVENT", from, until)
-                    CollectionKind.TASK_LIST -> pullCalendar(account, password, collection, "VTODO", from, until)
+                    CollectionKind.CALENDAR -> pullCalendar(
+                        account,
+                        password,
+                        collection,
+                        discoveredCollection.advertisedSyncToken,
+                        "VEVENT",
+                        from,
+                        until
+                    )
+                    CollectionKind.TASK_LIST -> pullCalendar(
+                        account,
+                        password,
+                        collection,
+                        discoveredCollection.advertisedSyncToken,
+                        "VTODO",
+                        from,
+                        until
+                    )
                     CollectionKind.FILE_ROOT -> {
-                        pullFileIndex(account, password, collection)
-                        dao.enabledMirrors().filter {
-                            it.collectionId == collection.id
-                        }.forEach { mirrorSyncEngine.synchronize(account, password, collection, it) }
+                        if (includeFiles) {
+                            pullFileIndex(account, password, collection)
+                            dao.enabledMirrors().filter {
+                                it.collectionId == collection.id
+                            }.forEach { mirrorSyncEngine.synchronize(account, password, collection, it) }
+                        }
                     }
                     CollectionKind.SHARE -> Unit
                 }
@@ -101,6 +138,7 @@ class SyncEngine(
 
     private suspend fun drainOutbox(account: DavAccountEntity, password: CharArray) {
         dao.pendingMutations().filter { it.accountId == account.id }.forEach { pending ->
+            if (pending.lastError?.startsWith(CONFLICT_PREFIX) == true) return@forEach
             try {
                 when (pending.mutationKind) {
                     MutationKind.CREATE, MutationKind.UPDATE -> {
@@ -123,19 +161,39 @@ class SyncEngine(
                             ObjectKind.FILE -> Unit
                         }
                     }
-                    MutationKind.DELETE -> dav.delete(account, password, pending.targetHref, pending.baseEtag)
+                    MutationKind.DELETE -> {
+                        dav.delete(account, password, pending.targetHref, pending.baseEtag)
+                        removeDeletedLocalObject(pending)
+                    }
                     MutationKind.MKCOL -> dav.makeCollection(account, password, pending.targetHref)
                     MutationKind.MOVE, MutationKind.UPLOAD -> error("File mutation is handled by the transfer worker")
                 }
                 dao.removeMutation(pending)
             } catch (error: DavHttpException) {
-                if (error.code == 409 || error.code == 412) markConflict(pending)
-                dao.updateMutation(pending.copy(attemptCount = pending.attemptCount + 1, lastError = error.message))
+                val conflict = error.code == 409 || error.code == 412
+                if (conflict) markConflict(pending)
+                dao.updateMutation(
+                    pending.copy(
+                        attemptCount = pending.attemptCount + 1,
+                        lastError = if (conflict) "$CONFLICT_PREFIX${error.message}" else error.message
+                    )
+                )
                 if (error.code == 401 || error.code == 403) throw error
             } catch (error: Exception) {
                 dao.updateMutation(pending.copy(attemptCount = pending.attemptCount + 1, lastError = error.message))
                 throw error
             }
+        }
+    }
+
+    private suspend fun removeDeletedLocalObject(pending: PendingMutationEntity) {
+        when (pending.objectKind) {
+            ObjectKind.EVENT -> dao.event(pending.objectId)?.let { event ->
+                dao.deleteOccurrencesBySource(event.id)
+                dao.deleteEvent(event)
+            }
+            ObjectKind.TASK -> dao.task(pending.objectId)?.let { dao.deleteTask(it) }
+            ObjectKind.FILE -> Unit
         }
     }
 
@@ -151,13 +209,65 @@ class SyncEngine(
         account: DavAccountEntity,
         password: CharArray,
         collection: DavCollectionEntity,
+        advertisedSyncToken: String?,
         component: String,
         from: Instant,
         until: Instant
     ) {
-        // A successful REPORT is a bounded snapshot, not proof that objects outside this window were deleted.
-        // Consequently this path only upserts; RFC 6578 tombstones may delete once implemented.
-        dav.calendarQuery(account, password, collection.href, component, from, until).forEach { remote ->
+        val storedToken = collection.syncToken
+        if (storedToken == null) {
+            val snapshot = dav.calendarQuery(account, password, collection.href, component, from, until)
+            applyCalendarResources(collection, component, from, until, snapshot)
+            if (component == "VTODO") reconcileCompleteTaskSnapshot(collection, snapshot)
+            advertisedSyncToken?.let { dao.upsertCollection(collection.copy(syncToken = it)) }
+            return
+        }
+
+        val delta = try {
+            dav.syncCollection(account, password, collection.href, storedToken)
+        } catch (error: DavHttpException) {
+            if (error.code !in setOf(403, 409, 410)) throw error
+            // An expired or rejected token is not evidence of deletion. Rebuild the bounded cache,
+            // then establish the token advertised during discovery as a new baseline.
+            val snapshot = dav.calendarQuery(account, password, collection.href, component, from, until)
+            applyCalendarResources(collection, component, from, until, snapshot)
+            if (component == "VTODO") reconcileCompleteTaskSnapshot(collection, snapshot)
+            advertisedSyncToken?.let { dao.upsertCollection(collection.copy(syncToken = it)) }
+            return
+        }
+
+        val changedHrefs = delta.resources.filterNot { it.deleted }.map { it.href }.distinct()
+        val changedResources = changedHrefs.chunked(MULTIGET_BATCH_SIZE).flatMap { hrefs ->
+            dav.calendarMultiget(account, password, collection.href, hrefs)
+        }
+        applyCalendarResources(collection, component, from, until, changedResources)
+        changedResources.filter { it.deleted }.forEach { remote -> applyRemoteTombstone(collection, remote.href) }
+        delta.resources.filter { it.deleted }.forEach { remote -> applyRemoteTombstone(collection, remote.href) }
+        dao.upsertCollection(collection.copy(syncToken = delta.nextSyncToken, ctag = collection.ctag))
+    }
+
+    private suspend fun reconcileCompleteTaskSnapshot(
+        collection: DavCollectionEntity,
+        resources: List<de.tobisk.inkdav.dav.DavResource>
+    ) {
+        val remoteHrefs = resources.filterNot { it.deleted }.mapTo(mutableSetOf()) { it.href }
+        dao.tasksInCollection(collection.id).filter { it.remoteHref !in remoteHrefs }.forEach { task ->
+            if (task.status == SyncStatus.CLEAN && !task.locallyDeleted) {
+                dao.deleteTask(task)
+            } else {
+                dao.upsertTask(task.copy(status = SyncStatus.CONFLICT))
+            }
+        }
+    }
+
+    private suspend fun applyCalendarResources(
+        collection: DavCollectionEntity,
+        component: String,
+        from: Instant,
+        until: Instant,
+        resources: List<de.tobisk.inkdav.dav.DavResource>
+    ) {
+        resources.forEach { remote ->
             val raw = remote.calendarData ?: return@forEach
             val parsed = IcalendarCodec.parse(collection.id, remote.href, remote.etag, raw)
             if (component == "VEVENT") {
@@ -196,6 +306,24 @@ class SyncEngine(
                         }
                     }
                 )
+            }
+        }
+    }
+
+    private suspend fun applyRemoteTombstone(collection: DavCollectionEntity, href: String) {
+        dao.eventsByHref(collection.id, href).forEach { event ->
+            if (event.status == SyncStatus.CLEAN && !event.locallyDeleted) {
+                dao.deleteOccurrencesBySource(event.id)
+                dao.deleteEvent(event)
+            } else {
+                dao.upsertEvent(event.copy(status = SyncStatus.CONFLICT))
+            }
+        }
+        dao.tasksByHref(collection.id, href).forEach { task ->
+            if (task.status == SyncStatus.CLEAN && !task.locallyDeleted) {
+                dao.deleteTask(task)
+            } else {
+                dao.upsertTask(task.copy(status = SyncStatus.CONFLICT))
             }
         }
     }
@@ -254,22 +382,38 @@ class SyncEngine(
         dao.updateFile(file.copy(localUri = target.toURI().toString(), lastSyncedEtag = file.etag, status = SyncStatus.CLEAN))
     }
 
-    private fun collection(
+    private fun discoveredCollection(
         account: DavAccountEntity,
         href: String,
         displayName: String,
         kind: CollectionKind,
         syncToken: String?,
-        ctag: String?
-    ) = DavCollectionEntity(
-        id = stableId(account.id, "$href|$kind"),
-        accountId = account.id,
-        href = href,
-        displayName = displayName.ifBlank { href.trimEnd('/').substringAfterLast('/') },
-        kind = kind,
-        syncToken = syncToken,
-        ctag = ctag
-    )
+        ctag: String?,
+        existingCollections: Map<String, DavCollectionEntity>
+    ): DiscoveredCollection {
+        val existing = existingCollections["$href|$kind"]
+        return DiscoveredCollection(
+            local = DavCollectionEntity(
+                id = existing?.id ?: stableId(account.id, "$href|$kind"),
+                accountId = account.id,
+                href = href,
+                displayName = displayName.ifBlank { href.trimEnd('/').substringAfterLast('/') },
+                kind = kind,
+                colorArgb = existing?.colorArgb ?: 0xff243b53,
+                readOnly = existing?.readOnly ?: false,
+                visible = existing?.visible ?: true,
+                // Discovery's current token must never overwrite the last successfully applied token.
+                syncToken = existing?.syncToken,
+                ctag = ctag
+            ),
+            advertisedSyncToken = syncToken
+        )
+    }
 
     private fun stableId(namespace: String, value: String) = UUID.nameUUIDFromBytes("$namespace|$value".encodeToByteArray()).toString()
+
+    companion object {
+        private const val MULTIGET_BATCH_SIZE = 100
+        private const val CONFLICT_PREFIX = "CONFLICT: "
+    }
 }

@@ -3,11 +3,13 @@ package de.tobisk.inkdav
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.SyncWorker
+import de.tobisk.inkdav.tasks.RecurringTaskProjector
 import de.tobisk.inkdav.widgets.WidgetUpdater
 import java.time.*
 import java.time.temporal.TemporalAdjusters
@@ -37,13 +39,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val taskMode = MutableStateFlow(TaskMode.SCHEDULE)
     val selectedFileCollection = MutableStateFlow<String?>(null)
     val selectedFileParent = MutableStateFlow<String?>(null)
+    val selectedMirror = MutableStateFlow<String?>(null)
+    val selectedMirrorParent = MutableStateFlow("")
     val editingEvent = MutableStateFlow<CalendarEventEntity?>(null)
+    val editingOccurrence = MutableStateFlow<CalendarOccurrenceEntity?>(null)
     val editingTask = MutableStateFlow<DavTaskEntity?>(null)
 
     val accounts = dao.observeAccounts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val collections = dao.observeCollections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val tasks = dao.observeTasks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val scheduledTasks = dao.observeTasks().map { source ->
+        source.mapNotNull { RecurringTaskProjector.next(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val pendingCount = dao.observePendingCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+    val conflictingEvents = dao.observeConflictingEvents().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val conflictingTasks = dao.observeConflictingTasks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val mirrors = dao.observeMirrors().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val settings = container.preferences.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InkDavSettings())
 
@@ -56,7 +66,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (collection == null) flowOf(emptyList()) else dao.observeFiles(collection, parent)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val mirrorFiles = combine(selectedMirror, selectedMirrorParent) { mirror, parent -> mirror to parent }
+        .flatMapLatest { (mirror, parent) ->
+            if (mirror == null) flowOf(emptyList()) else dao.observeMirrorChildren(mirror, parent)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun sync() = SyncWorker.enqueue(getApplication())
+
+    fun resolveEventConflict(event: CalendarEventEntity, keepBoth: Boolean) = viewModelScope.launch {
+        if (keepBoth) {
+            container.offlineRepository.keepBothEventConflict(event)
+        } else {
+            container.offlineRepository.resolveEventConflictWithServer(event)
+        }
+        sync()
+    }
+
+    fun resolveTaskConflict(task: DavTaskEntity, keepBoth: Boolean) = viewModelScope.launch {
+        if (keepBoth) {
+            container.offlineRepository.keepBothTaskConflict(task)
+        } else {
+            container.offlineRepository.resolveTaskConflictWithServer(task)
+        }
+        sync()
+    }
 
     fun addAccount(name: String, baseUrl: String, username: String, password: CharArray, nasDrive: Boolean) {
         viewModelScope.launch {
@@ -71,11 +104,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateCredentials(account: DavAccountEntity, password: CharArray) {
+        viewModelScope.launch {
+            container.credentials.put(account.id, password)
+            dao.upsertAccount(account.copy(lastSyncError = null))
+            sync()
+        }
+    }
+
+    fun removeAccount(account: DavAccountEntity) = viewModelScope.launch {
+        val mirrorUris = dao.collections(account.id).flatMap { dao.mirrorsForCollection(it.id) }.map { it.localTreeUri }.distinct()
+        container.credentials.remove(account.id)
+        dao.removeAccountData(account)
+        mirrorUris.forEach { value ->
+            runCatching {
+                getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                    Uri.parse(value),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+        }
+        WidgetUpdater.updateAll(getApplication())
+    }
+
     fun createEvent(collectionId: String, title: String, date: LocalDate, hour: Int, allDay: Boolean) {
         viewModelScope.launch {
             val zone = ZoneId.systemDefault()
             val start = date.atTime(if (allDay) LocalTime.MIDNIGHT else LocalTime.of(hour, 0)).atZone(zone).toInstant().toEpochMilli()
-            val end = start + if (allDay) 86_400_000 else 3_600_000
+            val end = if (allDay) CalendarTimeMath.nextLocalDay(start, zone) else start + 3_600_000
             container.offlineRepository.createEvent(collectionId, title, start, end, allDay)
             WidgetUpdater.updateAll(getApplication())
             sync()
@@ -100,8 +156,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openOccurrence(occurrence: CalendarOccurrenceEntity) = viewModelScope.launch {
-        editingEvent.value =
-            dao.event(occurrence.sourceEventId)
+        editingOccurrence.value = occurrence
+        editingEvent.value = dao.masterEvent(occurrence.collectionId, occurrence.uid) ?: dao.event(occurrence.sourceEventId)
     }
     fun openTask(task: DavTaskEntity) {
         editingTask.value = task
@@ -113,17 +169,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         location: String,
         start: Long,
         end: Long,
-        allDay: Boolean
+        allDay: Boolean,
+        entireSeries: Boolean
     ) = viewModelScope.launch {
-        container.offlineRepository.updateEvent(event, title, description, location, start, end, allDay)
+        val occurrence = editingOccurrence.value
+        if (!entireSeries && occurrence != null && event.recurrenceRule != null) {
+            container.offlineRepository.updateEventOccurrence(event, occurrence, title, description, location, start, end, allDay)
+        } else {
+            container.offlineRepository.updateEvent(event, title, description, location, start, end, allDay)
+        }
         editingEvent.value = null
+        editingOccurrence.value = null
         WidgetUpdater.updateAll(getApplication())
         sync()
     }
-    fun deleteEvent(event: CalendarEventEntity) = viewModelScope.launch {
-        container.offlineRepository.deleteEvent(event)
+    fun deleteEvent(event: CalendarEventEntity, entireSeries: Boolean) = viewModelScope.launch {
+        val occurrence = editingOccurrence.value
+        if (!entireSeries && occurrence != null && event.recurrenceRule != null) {
+            container.offlineRepository.deleteEventOccurrence(event, occurrence)
+        } else {
+            container.offlineRepository.deleteEvent(event)
+        }
         editingEvent.value =
             null
+        editingOccurrence.value = null
         WidgetUpdater.updateAll(getApplication())
         sync()
     }
@@ -141,12 +210,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectFileCollection(id: String, rootHref: String) {
+        selectedMirror.value = null
         selectedFileCollection.value = id
         selectedFileParent.value = rootHref
+    }
+    fun selectMirror(id: String) {
+        selectedFileCollection.value = null
+        selectedFileParent.value = null
+        selectedMirror.value = id
+        selectedMirrorParent.value = ""
+    }
+    fun openMirrorFolder(path: String) {
+        selectedMirrorParent.value = path
+    }
+    fun upMirrorFolder() {
+        selectedMirrorParent.value = selectedMirrorParent.value.substringBeforeLast('/', "")
+    }
+    fun openLocalFile(uri: String, mimeType: String?) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
+            setDataAndType(Uri.parse(uri), mimeType ?: "application/octet-stream")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { getApplication<Application>().startActivity(intent) }
     }
 
     fun openFolder(href: String) {
         selectedFileParent.value = href
+    }
+    fun openFile(file: FileNodeEntity) {
+        val uri = DocumentsContract.buildDocumentUri("de.tobisk.inkdav.documents", "file:${file.id}")
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, file.mimeType ?: "application/octet-stream")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { getApplication<Application>().startActivity(intent) }
     }
     fun toggleOffline(file: FileNodeEntity) = viewModelScope.launch {
         container.offlineRepository.toggleOffline(file)
@@ -155,6 +252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addMirror(uri: Uri) = viewModelScope.launch {
         val collectionId = selectedFileCollection.value ?: return@launch
         val href = selectedFileParent.value ?: return@launch
+        if (dao.mirrorForRemoteRoot(collectionId, href) != null || dao.mirrorForLocalTree(uri.toString()) != null) return@launch
         getApplication<Application>().contentResolver.takePersistableUriPermission(
             uri,
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -169,6 +267,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         )
         sync()
+    }
+    fun setMirrorEnabled(mirror: MirrorBindingEntity, enabled: Boolean) = viewModelScope.launch {
+        dao.upsertMirror(mirror.copy(enabled = enabled))
+        if (enabled) sync()
+    }
+    fun removeMirror(mirror: MirrorBindingEntity) = viewModelScope.launch {
+        dao.removeMirror(mirror)
+        runCatching {
+            getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                Uri.parse(mirror.localTreeUri),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
     }
     fun setCalendarWindow(pastDays: Int, futureMonths: Int) = viewModelScope.launch { container.preferences.setCalendarWindow(pastDays, futureMonths) }
     fun setEink(bold: Boolean, pages: Boolean) = viewModelScope.launch { container.preferences.setEink(bold, pages) }

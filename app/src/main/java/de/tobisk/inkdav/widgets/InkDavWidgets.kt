@@ -13,6 +13,7 @@ import de.tobisk.inkdav.InkDavApplication
 import de.tobisk.inkdav.MainActivity
 import de.tobisk.inkdav.R
 import de.tobisk.inkdav.data.*
+import de.tobisk.inkdav.tasks.RecurringTaskProjector
 import java.time.*
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.runBlocking
@@ -46,18 +47,15 @@ class TaskWidgetProvider : AppWidgetProvider() {
                 val rows = rowCount(options)
                 val config = runBlocking { dao.taskWidgetConfig(id) } ?: TaskWidgetConfigEntity(id)
                 val exclusions = runBlocking { dao.taskWidgetExclusions(id) }.map { it.collectionId }.ifEmpty { listOf("") }
-                val tasks = runBlocking {
-                    if (config.mode == TaskWidgetMode.LIST &&
-                        config.listCollectionId != null
-                    ) {
-                        dao.widgetListTasks(config.listCollectionId, rows)
+                val tasks = runBlocking { dao.openTasks() }.mapNotNull { RecurringTaskProjector.next(it) }.let { projected ->
+                    if (config.mode == TaskWidgetMode.LIST && config.listCollectionId != null) {
+                        projected.filter { it.collectionId == config.listCollectionId }
                     } else {
-                        val end = LocalDate.now().plusDays(
-                            config.lookAheadDays.toLong()
-                        ).plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        dao.widgetUpcomingTasks(end, exclusions, rows)
+                        val end = LocalDate.now().plusDays(config.lookAheadDays.toLong()).plusDays(1)
+                            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        projected.filter { it.collectionId !in exclusions && it.dueEpochMillis != null && it.dueEpochMillis < end }
                     }
-                }
+                }.sortedWith(compareBy<DavTaskEntity> { it.dueEpochMillis == null }.thenBy { it.dueEpochMillis }).take(rows)
                 val root = frame(
                     context,
                     if (config.mode ==

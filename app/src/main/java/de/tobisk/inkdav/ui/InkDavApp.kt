@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,14 +51,18 @@ fun InkDavApp(model: MainViewModel) {
     val accounts by model.accounts.collectAsStateWithLifecycle()
     val collections by model.collections.collectAsStateWithLifecycle()
     val events by model.events.collectAsStateWithLifecycle()
-    val tasks by model.tasks.collectAsStateWithLifecycle()
+    val scheduledTasks by model.scheduledTasks.collectAsStateWithLifecycle()
     val files by model.files.collectAsStateWithLifecycle()
+    val mirrorFiles by model.mirrorFiles.collectAsStateWithLifecycle()
     val pending by model.pendingCount.collectAsStateWithLifecycle()
+    val conflictingEvents by model.conflictingEvents.collectAsStateWithLifecycle()
+    val conflictingTasks by model.conflictingTasks.collectAsStateWithLifecycle()
     val settings by model.settings.collectAsStateWithLifecycle()
     val selectedDate by model.selectedDate.collectAsStateWithLifecycle()
     val calendarMode by model.calendarMode.collectAsStateWithLifecycle()
     val taskMode by model.taskMode.collectAsStateWithLifecycle()
     val editingEvent by model.editingEvent.collectAsStateWithLifecycle()
+    val editingOccurrence by model.editingOccurrence.collectAsStateWithLifecycle()
     val editingTask by model.editingTask.collectAsStateWithLifecycle()
 
     MaterialTheme(
@@ -88,15 +93,34 @@ fun InkDavApp(model: MainViewModel) {
                         },
                         collections
                     )
-                    Destination.TASKS -> TasksScreen(model, taskMode, tasks, collections)
-                    Destination.FILES -> FilesScreen(model, files, collections)
-                    Destination.SYNC -> SyncScreen(accounts, pending, model::sync)
+                    Destination.TASKS -> TasksScreen(model, taskMode, scheduledTasks, collections)
+                    Destination.FILES -> FilesScreen(model, files, mirrorFiles, collections)
+                    Destination.SYNC -> SyncScreen(
+                        accounts,
+                        pending,
+                        conflictingEvents,
+                        conflictingTasks,
+                        model::sync,
+                        model::resolveEventConflict,
+                        model::resolveTaskConflict
+                    )
                     Destination.SETTINGS -> SettingsScreen(model, accounts, settings)
                 }
             }
         }
     }
-    editingEvent?.let { EditEventDialog(it, { model.editingEvent.value = null }, model::updateEvent, model::deleteEvent) }
+    editingEvent?.let { event ->
+        EditEventDialog(
+            event,
+            editingOccurrence,
+            {
+                model.editingEvent.value = null
+                model.editingOccurrence.value = null
+            },
+            model::updateEvent,
+            model::deleteEvent
+        )
+    }
     editingTask?.let { EditTaskDialog(it, { model.editingTask.value = null }, model::updateTask, model::deleteTask) }
 }
 
@@ -541,7 +565,12 @@ private fun DayView(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TasksScreen(model: MainViewModel, mode: TaskMode, tasks: List<DavTaskEntity>, collections: List<DavCollectionEntity>) {
+private fun TasksScreen(
+    model: MainViewModel,
+    mode: TaskMode,
+    scheduledTasks: List<DavTaskEntity>,
+    collections: List<DavCollectionEntity>
+) {
     var showAdd by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -554,7 +583,7 @@ private fun TasksScreen(model: MainViewModel, mode: TaskMode, tasks: List<DavTas
         if (collections.none { it.kind == CollectionKind.TASK_LIST }) {
             EmptyState("No task lists", "Add a CalDAV account with VTODO support in Settings.")
         } else if (mode == TaskMode.SCHEDULE) {
-            val buckets = ScheduleBucketer.bucket(tasks, LocalDate.now(), ZoneId.systemDefault())
+            val buckets = ScheduleBucketer.bucket(scheduledTasks, LocalDate.now(), ZoneId.systemDefault())
             LazyColumn(Modifier.fillMaxSize().border(1.dp, Rule)) {
                 buckets.forEach { bucket ->
                     stickyHeader(bucket.key) { SectionHeader(bucket.title, bucket.tasks.size) }
@@ -567,7 +596,7 @@ private fun TasksScreen(model: MainViewModel, mode: TaskMode, tasks: List<DavTas
                 Column(Modifier.width(220.dp).fillMaxHeight().border(1.dp, Rule)) {
                     lists.forEach { list ->
                         Text(
-                            "${list.displayName}  ${tasks.count {
+                            "${list.displayName}  ${scheduledTasks.count {
                                 it.collectionId == list.id && it.completedAt == null
                             }}",
                             modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(14.dp),
@@ -576,7 +605,7 @@ private fun TasksScreen(model: MainViewModel, mode: TaskMode, tasks: List<DavTas
                     }
                 }
                 LazyColumn(Modifier.weight(1f).fillMaxHeight().border(1.dp, Rule)) {
-                    items(tasks, key = DavTaskEntity::id) { TaskRow(it, collections, model::toggleTask, model::openTask) }
+                    items(scheduledTasks, key = DavTaskEntity::id) { TaskRow(it, collections, model::toggleTask, model::openTask) }
                 }
             }
         }
@@ -619,10 +648,17 @@ private fun TaskRow(
 }
 
 @Composable
-private fun FilesScreen(model: MainViewModel, files: List<FileNodeEntity>, collections: List<DavCollectionEntity>) {
+private fun FilesScreen(
+    model: MainViewModel,
+    files: List<FileNodeEntity>,
+    mirrorFiles: List<MirrorEntryEntity>,
+    collections: List<DavCollectionEntity>
+) {
     val roots = collections.filter { it.kind == CollectionKind.FILE_ROOT || it.kind == CollectionKind.SHARE }
     val selectedCollection by model.selectedFileCollection.collectAsStateWithLifecycle()
     val selectedParent by model.selectedFileParent.collectAsStateWithLifecycle()
+    val selectedMirror by model.selectedMirror.collectAsStateWithLifecycle()
+    val selectedMirrorParent by model.selectedMirrorParent.collectAsStateWithLifecycle()
     val mirrors by model.mirrors.collectAsStateWithLifecycle()
     val mirrorPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri !=
@@ -633,8 +669,16 @@ private fun FilesScreen(model: MainViewModel, files: List<FileNodeEntity>, colle
     }
     Row(Modifier.fillMaxSize().padding(10.dp)) {
         Column(Modifier.width(230.dp).fillMaxHeight().border(1.dp, Rule)) {
-            SectionHeader("Sources", roots.size)
-            Text("Local folders", modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(14.dp))
+            SectionHeader("Sources", roots.size + mirrors.size)
+            Text("Local folders", modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(14.dp), fontWeight = FontWeight.Bold)
+            mirrors.forEach { mirror ->
+                Box(
+                    Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick { model.selectMirror(mirror.id) }.padding(12.dp)
+                ) {
+                    Text("▤  ${mirror.displayName}", fontWeight = if (selectedMirror == mirror.id) FontWeight.Bold else FontWeight.Medium)
+                }
+            }
+            Text("Online sources", modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(14.dp), fontWeight = FontWeight.Bold)
             roots.forEach { root ->
                 Box(
                     Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
@@ -653,20 +697,54 @@ private fun FilesScreen(model: MainViewModel, files: List<FileNodeEntity>, colle
                 Box(Modifier.padding(8.dp)) { InkButton("Mirror this folder") { mirrorPicker.launch(null) } }
             }
             mirrors.forEach { mirror ->
-                Text(
-                    "↔ ${mirror.displayName}\n${mirror.state.name.lowercase()}",
-                    modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(10.dp),
-                    fontSize = 13.sp
-                )
+                Column(Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(10.dp)) {
+                    Text("↔ ${mirror.displayName}", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(mirror.state.name.lowercase(), fontSize = 12.sp, color = MutedInk)
+                    mirror.lastError?.let { Text(it, fontSize = 12.sp, color = Warning) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        InkButton(if (mirror.enabled) "Pause" else "Resume") {
+                            model.setMirrorEnabled(mirror, !mirror.enabled)
+                        }
+                        InkButton("Remove") { model.removeMirror(mirror) }
+                    }
+                }
             }
         }
         Spacer(Modifier.width(8.dp))
-        if (roots.isEmpty()) {
+        if (roots.isEmpty() && mirrors.isEmpty()) {
             EmptyState(
                 "No file source",
                 "Add NASDrive or another WebDAV account. NASDrive uses /webdav/ with device credentials.",
                 Modifier.weight(1f)
             )
+        } else if (selectedMirror != null) {
+            LazyColumn(Modifier.weight(1f).fillMaxHeight().border(1.dp, Rule)) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(10.dp)) {
+                        Text("Physical mirror", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        if (selectedMirrorParent.isNotEmpty()) InkButton("↑ Up") { model.upMirrorFolder() }
+                        Spacer(Modifier.width(8.dp))
+                        Text("Local", color = MutedInk)
+                    }
+                }
+                items(mirrorFiles, key = MirrorEntryEntity::id) { entry ->
+                    Row(
+                        Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
+                            if (entry.isDirectory) {
+                                model.openMirrorFolder(entry.relativePath)
+                            } else {
+                                entry.localDocumentUri?.let { model.openLocalFile(it, entry.mimeType) }
+                            }
+                        }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(if (entry.isDirectory) "□" else "▧", fontSize = 22.sp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(entry.relativePath.substringAfterLast('/'), Modifier.weight(1f), fontSize = 17.sp)
+                        if (entry.status != MirrorEntryStatus.CLEAN) Text(entry.status.name.lowercase(), color = Warning)
+                    }
+                }
+            }
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxHeight().border(1.dp, Rule)) {
                 item {
@@ -679,7 +757,7 @@ private fun FilesScreen(model: MainViewModel, files: List<FileNodeEntity>, colle
                 items(files, key = FileNodeEntity::id) { file ->
                     Row(
                         Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
-                            if (file.isDirectory) model.openFolder(file.href)
+                            if (file.isDirectory) model.openFolder(file.href) else model.openFile(file)
                         }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -720,12 +798,39 @@ private fun FilesScreen(model: MainViewModel, files: List<FileNodeEntity>, colle
 }
 
 @Composable
-private fun SyncScreen(accounts: List<DavAccountEntity>, pending: Int, sync: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Synchronization", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("$pending local change${if (pending == 1) "" else "s"} waiting for upload. Reads always come from the local database.")
-        InkButton("Sync now") { sync() }
-        accounts.forEach { account ->
+private fun SyncScreen(
+    accounts: List<DavAccountEntity>,
+    pending: Int,
+    conflictingEvents: List<CalendarEventEntity>,
+    conflictingTasks: List<DavTaskEntity>,
+    sync: () -> Unit,
+    resolveEvent: (CalendarEventEntity, Boolean) -> Unit,
+    resolveTask: (DavTaskEntity, Boolean) -> Unit
+) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("Synchronization", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        }
+        item {
+            Text("$pending local change${if (pending == 1) "" else "s"} waiting for upload. Reads always come from the local database.")
+        }
+        item { InkButton("Sync now") { sync() } }
+        if (conflictingEvents.isNotEmpty() || conflictingTasks.isNotEmpty()) {
+            item {
+                Text("Conflicts", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Warning)
+                Text("Choose the server version, or keep both by uploading your offline edit as a separate copy.")
+            }
+            items(conflictingEvents, key = { "event-${it.id}" }) { event ->
+                ConflictRow(event.title, { resolveEvent(event, false) }, { resolveEvent(event, true) })
+            }
+            items(conflictingTasks, key = { "task-${it.id}" }) { task ->
+                ConflictRow(task.title, { resolveTask(task, false) }, { resolveTask(task, true) })
+            }
+        }
+        items(accounts, key = { it.id }) { account ->
             Column(Modifier.fillMaxWidth().border(1.dp, Rule).padding(14.dp)) {
                 Text(account.displayName, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                 Text(account.baseUrl, color = MutedInk)
@@ -744,8 +849,21 @@ private fun SyncScreen(accounts: List<DavAccountEntity>, pending: Int, sync: () 
 }
 
 @Composable
+private fun ConflictRow(title: String, useServer: () -> Unit, keepBoth: () -> Unit) {
+    Column(Modifier.fillMaxWidth().border(2.dp, Warning).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            InkButton("Use server") { useServer() }
+            InkButton("Keep both") { keepBoth() }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity>, settings: InkDavSettings) {
     var showAccount by remember { mutableStateOf(false) }
+    var credentialAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
+    var removalAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     Column(
         Modifier.fillMaxSize().padding(16.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -763,6 +881,10 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 Text(account.displayName, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text("${account.kind.name} · ${account.username}", color = MutedInk)
                 Text(account.baseUrl, color = MutedInk)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InkButton("Change secret") { credentialAccount = account }
+                    InkButton("Remove account") { removalAccount = account }
+                }
             }
         }
         SettingPanel("Calendar cache") {
@@ -800,6 +922,51 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
         }
     }
     if (showAccount) AccountEditor({ showAccount = false }, model::addAccount)
+    credentialAccount?.let { account ->
+        PasswordEditor(
+            account,
+            { credentialAccount = null }
+        ) { password ->
+            model.updateCredentials(account, password)
+            credentialAccount = null
+        }
+    }
+    removalAccount?.let { account ->
+        AlertDialog(
+            onDismissRequest = { removalAccount = null },
+            title = { Text("Remove ${account.displayName}?") },
+            text = { Text("Cached calendars, tasks, files, mirror state, pending edits, and the stored credential for this account will be removed from this device.") },
+            confirmButton = {
+                InkButton("Remove") {
+                    model.removeAccount(account)
+                    removalAccount = null
+                }
+            },
+            dismissButton = { InkButton("Cancel") { removalAccount = null } }
+        )
+    }
+}
+
+@Composable
+private fun PasswordEditor(account: DavAccountEntity, close: () -> Unit, save: (CharArray) -> Unit) {
+    var password by remember(account.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Change secret") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(account.displayName, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    password,
+                    { password = it },
+                    label = { Text("New password or device secret") },
+                    visualTransformation = PasswordVisualTransformation()
+                )
+            }
+        },
+        confirmButton = { InkButton("Save") { if (password.isNotEmpty()) save(password.toCharArray()) } },
+        dismissButton = { InkButton("Cancel", action = close) }
+    )
 }
 
 @Composable
@@ -825,7 +992,12 @@ private fun AccountEditor(close: () -> Unit, save: (String, String, String, Char
                 OutlinedTextField(name, { name = it }, label = { Text("Name") })
                 OutlinedTextField(url, { url = it }, label = { Text(if (nas) "NASDrive URL (ending /webdav/)" else "CalDAV/WebDAV URL") })
                 OutlinedTextField(user, { user = it }, label = { Text(if (nas) "Device access key" else "Username") })
-                OutlinedTextField(password, { password = it }, label = { Text(if (nas) "One-time device secret" else "Password") })
+                OutlinedTextField(
+                    password,
+                    { password = it },
+                    label = { Text(if (nas) "Device secret" else "Password") },
+                    visualTransformation = PasswordVisualTransformation()
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(nas, { nas = it })
                     Text("NASDrive account")
@@ -928,32 +1100,37 @@ private fun TaskEditor(lists: List<DavCollectionEntity>, close: () -> Unit, save
 @Composable
 private fun EditEventDialog(
     event: CalendarEventEntity,
+    occurrence: CalendarOccurrenceEntity?,
     close: () -> Unit,
-    save: (CalendarEventEntity, String, String, String, Long, Long, Boolean) -> Unit,
-    delete: (CalendarEventEntity) -> Unit
+    save: (CalendarEventEntity, String, String, String, Long, Long, Boolean, Boolean) -> Unit,
+    delete: (CalendarEventEntity, Boolean) -> Unit
 ) {
     var title by remember(event.id) { mutableStateOf(event.title) }
     var description by remember(event.id) { mutableStateOf(event.description) }
     var location by remember(event.id) { mutableStateOf(event.location) }
-    var start by remember(event.id) { mutableLongStateOf(event.startEpochMillis) }
-    var allDay by remember(event.id) { mutableStateOf(event.allDay) }
-    val duration = (event.endEpochMillis - event.startEpochMillis).coerceAtLeast(60_000)
+    var start by remember(event.id, occurrence?.id) { mutableLongStateOf(occurrence?.startEpochMillis ?: event.startEpochMillis) }
+    var end by remember(event.id, occurrence?.id) { mutableLongStateOf(occurrence?.endEpochMillis ?: event.endEpochMillis) }
+    var allDay by remember(event.id, occurrence?.id) { mutableStateOf(occurrence?.allDay ?: event.allDay) }
+    var entireSeries by remember(event.id, occurrence?.id) { mutableStateOf(false) }
     AlertDialog(onDismissRequest = close, title = {
         Text(
-            if (event.recurrenceRule ==
-                null
-            ) {
+            if (event.recurrenceRule == null) {
                 "Edit event offline"
             } else {
-                "Edit recurring series offline"
+                "Edit recurring event offline"
             }
         )
     }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (event.recurrenceRule !=
-                null
-            ) {
-                Text("This edits the entire series. Detached occurrence editing remains distinct from the master.", color = MutedInk)
+            if (event.recurrenceRule != null && occurrence != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(entireSeries, { entireSeries = it })
+                    Text("Apply to entire series")
+                }
+                Text(
+                    if (entireSeries) "The series master and all generated occurrences will change." else "Only this occurrence will change; the series remains intact.",
+                    color = MutedInk
+                )
             }
             OutlinedTextField(title, { title = it }, label = { Text("Title") })
             OutlinedTextField(description, { description = it }, label = { Text("Description") })
@@ -966,21 +1143,32 @@ private fun EditEventDialog(
                 Text("All day")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                InkButton("− day") { start -= 86_400_000 }
+                InkButton("− day") {
+                    start = CalendarTimeMath.shiftDays(start, -1)
+                    end = CalendarTimeMath.shiftDays(end, -1)
+                }
                 InkButton("+ day") {
-                    start +=
-                        86_400_000
+                    start = CalendarTimeMath.shiftDays(start, 1)
+                    end = CalendarTimeMath.shiftDays(end, 1)
                 }
                 if (!allDay) {
-                    InkButton("− hour") { start -= 3_600_000 }
-                    InkButton("+ hour") { start += 3_600_000 }
+                    InkButton("− hour") {
+                        start -= 3_600_000
+                        end -= 3_600_000
+                    }
+                    InkButton("+ hour") {
+                        start += 3_600_000
+                        end += 3_600_000
+                    }
                 }
             }
             Text(Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy HH:mm")))
         }
     }, confirmButton = {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            InkButton("Delete") { delete(event) }
+            InkButton(if (event.recurrenceRule != null && !entireSeries) "Delete occurrence" else "Delete") {
+                delete(event, entireSeries)
+            }
             InkButton("Save offline") {
                 if (title.isNotBlank()) {
                     save(
@@ -989,8 +1177,9 @@ private fun EditEventDialog(
                         description,
                         location,
                         start,
-                        start + duration,
-                        allDay
+                        end,
+                        allDay,
+                        entireSeries
                     )
                 }
             }
@@ -1019,8 +1208,7 @@ private fun EditTaskDialog(
                         LocalDate.now().atTime(9, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 }
                 InkButton("+ day") {
-                    due =
-                        (due ?: System.currentTimeMillis()) + 86_400_000
+                    due = CalendarTimeMath.shiftDays(due ?: System.currentTimeMillis(), 1)
                 }
             }
         }

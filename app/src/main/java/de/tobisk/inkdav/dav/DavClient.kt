@@ -19,7 +19,13 @@ data class DavResource(
     val syncToken: String? = null,
     val ctag: String? = null,
     val currentUserPrincipalHref: String? = null,
-    val calendarHomeHref: String? = null
+    val calendarHomeHref: String? = null,
+    val deleted: Boolean = false
+)
+
+data class DavSyncResult(
+    val resources: List<DavResource>,
+    val nextSyncToken: String
 )
 
 class DavHttpException(val code: Int, message: String) : Exception(message)
@@ -33,6 +39,18 @@ interface DavClient {
         component: String,
         from: Instant,
         until: Instant
+    ): List<DavResource>
+    suspend fun syncCollection(
+        account: DavAccountEntity,
+        password: CharArray,
+        collectionHref: String,
+        syncToken: String
+    ): DavSyncResult
+    suspend fun calendarMultiget(
+        account: DavAccountEntity,
+        password: CharArray,
+        collectionHref: String,
+        hrefs: List<String>
     ): List<DavResource>
     suspend fun list(account: DavAccountEntity, password: CharArray, href: String): List<DavResource>
     suspend fun get(account: DavAccountEntity, password: CharArray, href: String): InputStream
@@ -56,5 +74,6 @@ interface DavClient {
         createOnly: Boolean = false
     ): String? = body().use { put(account, password, href, it.readBytes(), contentType, etag, createOnly) }
     suspend fun delete(account: DavAccountEntity, password: CharArray, href: String, etag: String?)
+    suspend fun move(account: DavAccountEntity, password: CharArray, sourceHref: String, destinationHref: String, etag: String?)
     suspend fun makeCollection(account: DavAccountEntity, password: CharArray, href: String)
 }

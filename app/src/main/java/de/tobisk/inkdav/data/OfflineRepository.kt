@@ -6,6 +6,87 @@ import java.time.ZoneId
 import java.util.UUID
 
 class OfflineRepository(private val dao: InkDavDao) {
+    suspend fun resolveEventConflictWithServer(event: CalendarEventEntity) {
+        dao.clearMutationsForObject(event.id)
+        dao.deleteOccurrencesBySource(event.id)
+        dao.deleteEvent(event)
+        dao.collection(event.collectionId)?.let { dao.upsertCollection(it.copy(syncToken = null)) }
+    }
+
+    suspend fun keepBothEventConflict(event: CalendarEventEntity) {
+        val collection = requireNotNull(dao.collection(event.collectionId))
+        val uid = "${UUID.randomUUID()}@inkdav"
+        val href = collection.href.trimEnd('/') + "/$uid.ics"
+        val copy = event.copy(
+            id = IcalendarCodec.stableId(event.collectionId, uid),
+            remoteHref = href,
+            uid = uid,
+            etag = null,
+            title = "${event.title} (local copy)",
+            recurrenceId = null,
+            rawIcal = null,
+            status = SyncStatus.PENDING,
+            locallyDeleted = false,
+            localUpdatedAt = System.currentTimeMillis()
+        )
+        val payload = IcalendarCodec.encode(copy)
+        dao.clearMutationsForObject(event.id)
+        dao.deleteOccurrencesBySource(event.id)
+        dao.deleteEvent(event)
+        dao.createEventOffline(
+            copy.copy(rawIcal = payload),
+            PendingMutationEntity(
+                UUID.randomUUID().toString(),
+                collection.accountId,
+                ObjectKind.EVENT,
+                copy.id,
+                MutationKind.CREATE,
+                href,
+                payload = payload
+            )
+        )
+        dao.upsertCollection(collection.copy(syncToken = null))
+    }
+
+    suspend fun resolveTaskConflictWithServer(task: DavTaskEntity) {
+        dao.clearMutationsForObject(task.id)
+        dao.deleteTask(task)
+        dao.collection(task.collectionId)?.let { dao.upsertCollection(it.copy(syncToken = null)) }
+    }
+
+    suspend fun keepBothTaskConflict(task: DavTaskEntity) {
+        val collection = requireNotNull(dao.collection(task.collectionId))
+        val uid = "${UUID.randomUUID()}@inkdav"
+        val href = collection.href.trimEnd('/') + "/$uid.ics"
+        val copy = task.copy(
+            id = IcalendarCodec.stableId(task.collectionId, uid),
+            remoteHref = href,
+            uid = uid,
+            etag = null,
+            title = "${task.title} (local copy)",
+            rawIcal = null,
+            status = SyncStatus.PENDING,
+            locallyDeleted = false,
+            localUpdatedAt = System.currentTimeMillis()
+        )
+        val payload = IcalendarCodec.encode(copy)
+        dao.clearMutationsForObject(task.id)
+        dao.deleteTask(task)
+        dao.createTaskOffline(
+            copy.copy(rawIcal = payload),
+            PendingMutationEntity(
+                UUID.randomUUID().toString(),
+                collection.accountId,
+                ObjectKind.TASK,
+                copy.id,
+                MutationKind.CREATE,
+                href,
+                payload = payload
+            )
+        )
+        dao.upsertCollection(collection.copy(syncToken = null))
+    }
+
     suspend fun toggleOffline(file: FileNodeEntity) {
         val next = if (file.offlinePolicy == OfflinePolicy.ONLINE_ONLY) OfflinePolicy.PINNED else OfflinePolicy.ONLINE_ONLY
         dao.updateFile(file.copy(offlinePolicy = next, status = if (next == OfflinePolicy.PINNED) SyncStatus.PENDING else SyncStatus.CLEAN))
@@ -74,6 +155,31 @@ class OfflineRepository(private val dao: InkDavDao) {
 
     suspend fun toggleTask(task: DavTaskEntity) {
         val collection = requireNotNull(dao.collection(task.collectionId))
+        if (task.recurrenceRule != null && task.completedAt == null) {
+            val stored = requireNotNull(dao.task(task.id))
+            val now = System.currentTimeMillis()
+            val payload = IcalendarCodec.completeRecurringTask(
+                requireNotNull(stored.rawIcal) { "Recurring task source is unavailable" },
+                stored,
+                requireNotNull(task.dueEpochMillis) { "Recurring task has no occurrence date" },
+                now
+            )
+            dao.clearMutationsForObject(stored.id)
+            dao.createTaskOffline(
+                stored.copy(rawIcal = payload, status = SyncStatus.PENDING, localUpdatedAt = now),
+                PendingMutationEntity(
+                    UUID.randomUUID().toString(),
+                    collection.accountId,
+                    ObjectKind.TASK,
+                    stored.id,
+                    MutationKind.UPDATE,
+                    requireNotNull(stored.remoteHref),
+                    stored.etag,
+                    payload
+                )
+            )
+            return
+        }
         val changed = task.copy(
             completedAt = if (task.completedAt == null) System.currentTimeMillis() else null,
             status = SyncStatus.PENDING,
@@ -139,6 +245,113 @@ class OfflineRepository(private val dao: InkDavDao) {
                 payload,
                 start - 366L * 86_400_000,
                 end + 3660L * 86_400_000,
+                ZoneId.systemDefault(),
+                SyncStatus.PENDING
+            )
+        )
+    }
+
+    suspend fun updateEventOccurrence(
+        master: CalendarEventEntity,
+        occurrence: CalendarOccurrenceEntity,
+        title: String,
+        description: String,
+        location: String,
+        start: Long,
+        end: Long,
+        allDay: Boolean
+    ) {
+        val collection = requireNotNull(dao.collection(master.collectionId))
+        val changed = master.copy(
+            title = title.trim(),
+            description = description,
+            location = location,
+            startEpochMillis = start,
+            endEpochMillis = end,
+            allDay = allDay,
+            recurrenceRule = null,
+            status = SyncStatus.PENDING,
+            localUpdatedAt = System.currentTimeMillis()
+        )
+        val (payload, recurrenceId) = IcalendarCodec.upsertEventException(
+            master.rawIcal ?: IcalendarCodec.encode(master),
+            master,
+            occurrence.originalStartEpochMillis,
+            changed
+        )
+        val storedMaster = master.copy(rawIcal = payload, status = SyncStatus.PENDING, localUpdatedAt = System.currentTimeMillis())
+        val exception = changed.copy(
+            id = IcalendarCodec.stableId(master.collectionId, master.uid, recurrenceId),
+            recurrenceId = recurrenceId,
+            rawIcal = payload
+        )
+        dao.clearMutationsForObject(master.id)
+        dao.createEventOffline(
+            storedMaster,
+            PendingMutationEntity(
+                UUID.randomUUID().toString(),
+                collection.accountId,
+                ObjectKind.EVENT,
+                master.id,
+                MutationKind.UPDATE,
+                requireNotNull(master.remoteHref),
+                master.etag,
+                payload
+            )
+        )
+        dao.upsertEvent(exception)
+        dao.replaceOccurrencesForHref(
+            master.collectionId,
+            requireNotNull(master.remoteHref),
+            RecurrenceProjector.project(
+                master.collectionId,
+                master.remoteHref,
+                payload,
+                start - 366L * 86_400_000,
+                end + 3660L * 86_400_000,
+                ZoneId.systemDefault(),
+                SyncStatus.PENDING
+            )
+        )
+    }
+
+    suspend fun deleteEventOccurrence(master: CalendarEventEntity, occurrence: CalendarOccurrenceEntity) {
+        val collection = requireNotNull(dao.collection(master.collectionId))
+        val placeholder = master.copy(
+            startEpochMillis = occurrence.startEpochMillis,
+            endEpochMillis = occurrence.endEpochMillis,
+            recurrenceRule = null
+        )
+        val (payload, _) = IcalendarCodec.upsertEventException(
+            master.rawIcal ?: IcalendarCodec.encode(master),
+            master,
+            occurrence.originalStartEpochMillis,
+            placeholder,
+            cancelled = true
+        )
+        dao.clearMutationsForObject(master.id)
+        dao.createEventOffline(
+            master.copy(rawIcal = payload, status = SyncStatus.PENDING, localUpdatedAt = System.currentTimeMillis()),
+            PendingMutationEntity(
+                UUID.randomUUID().toString(),
+                collection.accountId,
+                ObjectKind.EVENT,
+                master.id,
+                MutationKind.UPDATE,
+                requireNotNull(master.remoteHref),
+                master.etag,
+                payload
+            )
+        )
+        dao.replaceOccurrencesForHref(
+            master.collectionId,
+            requireNotNull(master.remoteHref),
+            RecurrenceProjector.project(
+                master.collectionId,
+                master.remoteHref,
+                payload,
+                occurrence.originalStartEpochMillis - 366L * 86_400_000,
+                occurrence.originalStartEpochMillis + 3660L * 86_400_000,
                 ZoneId.systemDefault(),
                 SyncStatus.PENDING
             )

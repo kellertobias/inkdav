@@ -44,6 +44,12 @@ object RecurrenceProjector {
             }
         }
 
+        exceptions.filter(::thisAndFuture).sortedBy {
+            epoch(it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).orElseThrow().date, displayZone)
+        }.forEach { event ->
+            applyThisAndFuture(result, event, collectionId, href, displayZone, syncStatus)
+        }
+
         exceptions.forEach { event ->
             val recurrenceTemporal = event.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).orElseThrow().date
             val original = epoch(recurrenceTemporal, displayZone)
@@ -60,6 +66,41 @@ object RecurrenceProjector {
             }
         }
         return result.values.sortedBy(CalendarOccurrenceEntity::startEpochMillis)
+    }
+
+    private fun applyThisAndFuture(
+        result: MutableMap<String, CalendarOccurrenceEntity>,
+        event: VEvent,
+        collectionId: String,
+        href: String?,
+        zone: ZoneId,
+        status: SyncStatus
+    ) {
+        val recurrence = event.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).orElseThrow()
+        val boundary = epoch(recurrence.date, zone)
+        val uid = event.getProperty<Uid>(Property.UID).orElseThrow().value
+        val affected = result.values.filter { it.uid == uid && it.originalStartEpochMillis >= boundary }
+        if (cancelled(event)) {
+            affected.forEach { result.remove(key(event, it.originalStartEpochMillis)) }
+            return
+        }
+        val changedPeriod = singlePeriod(event, zone) ?: return
+        val offset = changedPeriod.first - boundary
+        val duration = (changedPeriod.second - changedPeriod.first).coerceAtLeast(0)
+        affected.forEach { existing ->
+            val shiftedStart = existing.startEpochMillis + offset
+            result[key(event, existing.originalStartEpochMillis)] = occurrence(
+                event,
+                collectionId,
+                href,
+                existing.originalStartEpochMillis,
+                shiftedStart,
+                shiftedStart + duration,
+                zone,
+                true,
+                status
+            )
+        }
     }
 
     private fun consumedPeriods(event: VEvent, start: Long, end: Long, zone: ZoneId): List<Pair<Long, Long>> {
@@ -129,6 +170,10 @@ object RecurrenceProjector {
     }
 
     private fun key(event: VEvent, original: Long): String = event.getProperty<Uid>(Property.UID).orElseThrow().value + "|" + original
+    private fun thisAndFuture(event: VEvent): Boolean = event.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID)
+        .flatMap { it.getParameter<net.fortuna.ical4j.model.Parameter>("RANGE") }
+        .map { it.value.equals("THISANDFUTURE", true) }
+        .orElse(false)
     private fun cancelled(event: VEvent) = event.getProperty<Property>(Property.STATUS).map { it.value.equals("CANCELLED", true) }.orElse(false)
     private fun epoch(temporal: Temporal, zone: ZoneId): Long = when (temporal) {
         is Instant -> temporal.toEpochMilli()

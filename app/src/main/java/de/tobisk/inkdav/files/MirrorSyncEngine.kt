@@ -24,12 +24,13 @@ class MirrorSyncEngine(private val context: Context, private val dao: InkDavDao,
             scanRemote(account, password, binding.remoteRootHref, "", remote, intArrayOf(binding.itemLimit))
             val local = linkedMapOf<String, Local>()
             scanLocal(root, "", local, intArrayOf(binding.itemLimit))
-            val existing = dao.mirrorEntries(binding.id).associateBy { it.relativePath }
+            val existing = dao.mirrorEntries(binding.id).associateByTo(linkedMapOf()) { it.relativePath }
             if (remote.isEmpty() &&
                 existing.isNotEmpty()
             ) {
                 error("Remote mirror scan unexpectedly returned no entries; deletion reconciliation aborted")
             }
+            propagateRenames(account, password, binding, root, remote, local, existing)
             val updated = mutableListOf<MirrorEntryEntity>()
             (remote.keys + local.keys + existing.keys).sortedBy { it.count { ch -> ch == '/' } }.forEach { path ->
                 val r = remote[path]
@@ -157,6 +158,77 @@ class MirrorSyncEngine(private val context: Context, private val dao: InkDavDao,
             throw error
         }
     }
+
+    private suspend fun propagateRenames(
+        account: DavAccountEntity,
+        password: CharArray,
+        binding: MirrorBindingEntity,
+        root: DocumentFile,
+        remote: MutableMap<String, Remote>,
+        local: MutableMap<String, Local>,
+        existing: MutableMap<String, MirrorEntryEntity>
+    ) {
+        val newLocalFiles = local.values.filter { it.document.isFile && remote[it.path] == null && existing[it.path] == null }
+        newLocalFiles.forEach { added ->
+            val candidates = existing.values.filter { old ->
+                !old.isDirectory &&
+                    local[old.relativePath] == null &&
+                    remote[old.relativePath]?.let { current ->
+                        fingerprint(current.value) == old.baselineRemoteEtag
+                    } == true &&
+                    added.hash == old.baselineLocalHash
+            }
+            if (candidates.size != 1) return@forEach
+            val old = candidates.single()
+            val oldRemote = remote.remove(old.relativePath) ?: return@forEach
+            val destination = remoteHref(binding.remoteRootHref, added.path)
+            dav.move(account, password, oldRemote.value.href, destination, old.baselineRemoteEtag)
+            remote[added.path] = Remote(
+                added.path,
+                oldRemote.value.copy(href = destination, displayName = added.document.name.orEmpty())
+            )
+            existing.remove(old.relativePath)
+            existing[added.path] = old.copy(
+                relativePath = added.path,
+                remoteHref = destination,
+                localDocumentUri = added.document.uri.toString()
+            )
+        }
+
+        val newRemoteFiles = remote.values.filter { !it.value.isCollection && local[it.path] == null && existing[it.path] == null }
+        newRemoteFiles.forEach { added ->
+            val candidates = existing.values.filter { old ->
+                !old.isDirectory &&
+                    remote[old.relativePath] == null &&
+                    local[old.relativePath]?.hash == old.baselineLocalHash &&
+                    fingerprint(added.value) == old.baselineRemoteEtag
+            }
+            if (candidates.size != 1) return@forEach
+            val old = candidates.single()
+            val oldLocal = local.remove(old.relativePath) ?: return@forEach
+            val renamed = if (old.relativePath.substringBeforeLast('/', "") == added.path.substringBeforeLast('/', "")) {
+                oldLocal.document.renameTo(added.path.substringAfterLast('/'))
+            } else {
+                download(account, password, root, added.path, added.value.href)
+                oldLocal.document.delete()
+                true
+            }
+            if (!renamed) {
+                if (find(root, added.path) == null) return@forEach
+            }
+            val document = find(root, added.path) ?: return@forEach
+            val movedLocal = Local(added.path, document, hash(document))
+            local[added.path] = movedLocal
+            existing.remove(old.relativePath)
+            existing[added.path] = old.copy(
+                relativePath = added.path,
+                remoteHref = added.value.href,
+                localDocumentUri = document.uri.toString()
+            )
+        }
+    }
+
+    private fun fingerprint(resource: DavResource): String? = resource.etag ?: "${resource.size}:${resource.modifiedAt}"
 
     private suspend fun scanRemote(
         account: DavAccountEntity,

@@ -26,6 +26,47 @@ interface InkDavDao {
     @Delete
     suspend fun deleteAccount(account: DavAccountEntity)
 
+    @Query("DELETE FROM calendar_occurrences WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId)")
+    suspend fun deleteAccountOccurrences(accountId: String)
+
+    @Query("DELETE FROM events WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId)")
+    suspend fun deleteAccountEvents(accountId: String)
+
+    @Query("DELETE FROM tasks WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId)")
+    suspend fun deleteAccountTasks(accountId: String)
+
+    @Query("DELETE FROM file_nodes WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId)")
+    suspend fun deleteAccountFiles(accountId: String)
+
+    @Query("DELETE FROM mirror_entries WHERE bindingId IN (SELECT id FROM mirror_bindings WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId))")
+    suspend fun deleteAccountMirrorEntries(accountId: String)
+
+    @Query("DELETE FROM mirror_bindings WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId)")
+    suspend fun deleteAccountMirrors(accountId: String)
+
+    @Query("DELETE FROM task_widget_exclusions WHERE collectionId IN (SELECT id FROM collections WHERE accountId = :accountId)")
+    suspend fun deleteAccountWidgetExclusions(accountId: String)
+
+    @Query("DELETE FROM pending_mutations WHERE accountId = :accountId")
+    suspend fun deleteAccountMutations(accountId: String)
+
+    @Query("DELETE FROM collections WHERE accountId = :accountId")
+    suspend fun deleteAccountCollections(accountId: String)
+
+    @Transaction
+    suspend fun removeAccountData(account: DavAccountEntity) {
+        deleteAccountOccurrences(account.id)
+        deleteAccountEvents(account.id)
+        deleteAccountTasks(account.id)
+        deleteAccountFiles(account.id)
+        deleteAccountMirrorEntries(account.id)
+        deleteAccountMirrors(account.id)
+        deleteAccountWidgetExclusions(account.id)
+        deleteAccountMutations(account.id)
+        deleteAccountCollections(account.id)
+        deleteAccount(account)
+    }
+
     @Query("SELECT * FROM collections ORDER BY kind, displayName")
     fun observeCollections(): Flow<List<DavCollectionEntity>>
 
@@ -37,6 +78,9 @@ interface InkDavDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCollections(collections: List<DavCollectionEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCollection(collection: DavCollectionEntity)
 
     @Query(
         "SELECT * FROM events WHERE locallyDeleted = 0 AND endEpochMillis >= :start AND startEpochMillis < :end ORDER BY startEpochMillis"
@@ -57,8 +101,14 @@ interface InkDavDao {
     @Query("SELECT * FROM events WHERE id = :id")
     suspend fun event(id: String): CalendarEventEntity?
 
+    @Query("SELECT * FROM events WHERE status = 'CONFLICT' AND locallyDeleted = 0 ORDER BY localUpdatedAt DESC")
+    fun observeConflictingEvents(): Flow<List<CalendarEventEntity>>
+
     @Query("SELECT * FROM events WHERE collectionId = :collectionId AND remoteHref = :href")
     suspend fun eventsByHref(collectionId: String, href: String): List<CalendarEventEntity>
+
+    @Query("SELECT * FROM events WHERE collectionId = :collectionId AND uid = :uid AND recurrenceId IS NULL LIMIT 1")
+    suspend fun masterEvent(collectionId: String, uid: String): CalendarEventEntity?
 
     @Query("SELECT * FROM calendar_occurrences WHERE endEpochMillis >= :start AND startEpochMillis < :end ORDER BY startEpochMillis")
     fun observeOccurrences(start: Long, end: Long): Flow<List<CalendarOccurrenceEntity>>
@@ -84,6 +134,9 @@ interface InkDavDao {
     @Query("SELECT * FROM tasks WHERE locallyDeleted = 0 ORDER BY completedAt IS NOT NULL, dueEpochMillis IS NULL, dueEpochMillis, title")
     fun observeTasks(): Flow<List<DavTaskEntity>>
 
+    @Query("SELECT * FROM tasks WHERE locallyDeleted = 0 AND completedAt IS NULL")
+    suspend fun openTasks(): List<DavTaskEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertTasks(tasks: List<DavTaskEntity>)
 
@@ -92,6 +145,15 @@ interface InkDavDao {
 
     @Query("SELECT * FROM tasks WHERE id = :id")
     suspend fun task(id: String): DavTaskEntity?
+
+    @Query("SELECT * FROM tasks WHERE status = 'CONFLICT' AND locallyDeleted = 0 ORDER BY localUpdatedAt DESC")
+    fun observeConflictingTasks(): Flow<List<DavTaskEntity>>
+
+    @Query("SELECT * FROM tasks WHERE collectionId = :collectionId AND remoteHref = :href")
+    suspend fun tasksByHref(collectionId: String, href: String): List<DavTaskEntity>
+
+    @Query("SELECT * FROM tasks WHERE collectionId = :collectionId")
+    suspend fun tasksInCollection(collectionId: String): List<DavTaskEntity>
 
     @Delete
     suspend fun deleteTask(task: DavTaskEntity)
@@ -142,17 +204,50 @@ interface InkDavDao {
     @Query("SELECT * FROM mirror_bindings WHERE enabled = 1")
     suspend fun enabledMirrors(): List<MirrorBindingEntity>
 
+    @Query("SELECT * FROM mirror_bindings WHERE id = :id")
+    suspend fun mirror(id: String): MirrorBindingEntity?
+
+    @Query("SELECT * FROM mirror_bindings WHERE collectionId = :collectionId AND remoteRootHref = :remoteRootHref LIMIT 1")
+    suspend fun mirrorForRemoteRoot(collectionId: String, remoteRootHref: String): MirrorBindingEntity?
+
+    @Query("SELECT * FROM mirror_bindings WHERE localTreeUri = :localTreeUri LIMIT 1")
+    suspend fun mirrorForLocalTree(localTreeUri: String): MirrorBindingEntity?
+
+    @Query("SELECT * FROM mirror_bindings WHERE collectionId = :collectionId")
+    suspend fun mirrorsForCollection(collectionId: String): List<MirrorBindingEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMirror(binding: MirrorBindingEntity)
 
+    @Delete
+    suspend fun deleteMirror(binding: MirrorBindingEntity)
+
     @Query("SELECT * FROM mirror_entries WHERE bindingId = :bindingId")
     suspend fun mirrorEntries(bindingId: String): List<MirrorEntryEntity>
+
+    @Query(
+        "SELECT * FROM mirror_entries WHERE bindingId = :bindingId AND " +
+            "((:parentPath = '' AND instr(relativePath, '/') = 0) OR " +
+            "(:parentPath != '' AND relativePath LIKE :parentPath || '/%' AND " +
+            "instr(substr(relativePath, length(:parentPath) + 2), '/') = 0)) " +
+            "ORDER BY isDirectory DESC, relativePath COLLATE NOCASE"
+    )
+    fun observeMirrorChildren(bindingId: String, parentPath: String): Flow<List<MirrorEntryEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMirrorEntries(entries: List<MirrorEntryEntity>)
 
     @Query("DELETE FROM mirror_entries WHERE bindingId = :bindingId AND relativePath = :relativePath")
     suspend fun deleteMirrorEntry(bindingId: String, relativePath: String)
+
+    @Query("DELETE FROM mirror_entries WHERE bindingId = :bindingId")
+    suspend fun deleteMirrorEntries(bindingId: String)
+
+    @Transaction
+    suspend fun removeMirror(binding: MirrorBindingEntity) {
+        deleteMirrorEntries(binding.id)
+        deleteMirror(binding)
+    }
 
     @Query("SELECT * FROM task_widget_configs WHERE appWidgetId = :id")
     suspend fun taskWidgetConfig(id: Int): TaskWidgetConfigEntity?

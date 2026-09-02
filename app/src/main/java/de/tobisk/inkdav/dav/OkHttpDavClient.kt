@@ -21,6 +21,8 @@ import okio.BufferedSink
 import okio.source
 import org.xmlpull.v1.XmlPullParser
 
+internal data class ParsedMultiStatus(val resources: List<DavResource>, val syncToken: String?)
+
 class OkHttpDavClient(
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -59,7 +61,59 @@ class OkHttpDavClient(
               <c:filter><c:comp-filter name="VCALENDAR">$componentFilter</c:comp-filter></c:filter>
             </c:calendar-query>
         """.trimIndent()
-        return xmlRequest(account, password, resolve(account.baseUrl, collectionHref), "REPORT", body, mapOf("Depth" to "1"))
+        return xmlRequest(account, password, resolve(account.baseUrl, collectionHref), "REPORT", body, mapOf("Depth" to "1")).resources
+    }
+
+    override suspend fun syncCollection(
+        account: DavAccountEntity,
+        password: CharArray,
+        collectionHref: String,
+        syncToken: String
+    ): DavSyncResult {
+        val body = """<?xml version="1.0" encoding="utf-8" ?>
+            <d:sync-collection xmlns:d="DAV:">
+              <d:sync-token>${xmlEscape(syncToken)}</d:sync-token>
+              <d:sync-level>1</d:sync-level>
+              <d:prop><d:getetag/></d:prop>
+            </d:sync-collection>
+        """.trimIndent()
+        val parsed = xmlRequest(
+            account,
+            password,
+            resolve(account.baseUrl, collectionHref),
+            "REPORT",
+            body,
+            mapOf("Depth" to "1")
+        )
+        return DavSyncResult(
+            resources = parsed.resources,
+            nextSyncToken = parsed.syncToken?.takeIf(String::isNotBlank)
+                ?: error("DAV sync report did not return a sync token")
+        )
+    }
+
+    override suspend fun calendarMultiget(
+        account: DavAccountEntity,
+        password: CharArray,
+        collectionHref: String,
+        hrefs: List<String>
+    ): List<DavResource> {
+        if (hrefs.isEmpty()) return emptyList()
+        val requested = hrefs.joinToString("\n") { "<d:href>${xmlEscape(it)}</d:href>" }
+        val body = """<?xml version="1.0" encoding="utf-8" ?>
+            <c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+              <d:prop><d:getetag/><c:calendar-data/></d:prop>
+              $requested
+            </c:calendar-multiget>
+        """.trimIndent()
+        return xmlRequest(
+            account,
+            password,
+            resolve(account.baseUrl, collectionHref),
+            "REPORT",
+            body,
+            mapOf("Depth" to "1")
+        ).resources
     }
 
     override suspend fun list(account: DavAccountEntity, password: CharArray, href: String): List<DavResource> = propfind(account, password, resolve(account.baseUrl, href), 1, FILE_PROPERTIES)
@@ -134,6 +188,24 @@ class OkHttpDavClient(
         }
     }
 
+    override suspend fun move(
+        account: DavAccountEntity,
+        password: CharArray,
+        sourceHref: String,
+        destinationHref: String,
+        etag: String?
+    ) = withContext(Dispatchers.IO) {
+        val destination = resolve(account.baseUrl, destinationHref)
+        val builder = Request.Builder().url(resolve(account.baseUrl, sourceHref))
+            .method("MOVE", ByteArray(0).toRequestBody(null))
+            .header("Destination", destination)
+            .header("Overwrite", "F")
+        etag?.let { builder.header("If-Match", it) }
+        execute(account, password, builder).use {
+            if (!it.isSuccessful) throw DavHttpException(it.code, "DAV move failed (${it.code})")
+        }
+    }
+
     override suspend fun makeCollection(account: DavAccountEntity, password: CharArray, href: String) = withContext(Dispatchers.IO) {
         execute(
             account,
@@ -153,7 +225,7 @@ class OkHttpDavClient(
         mapOf(
             "Depth" to depth.toString()
         )
-    )
+    ).resources
 
     private suspend fun xmlRequest(
         account: DavAccountEntity,
@@ -162,7 +234,7 @@ class OkHttpDavClient(
         method: String,
         xml: String,
         headers: Map<String, String>
-    ): List<DavResource> = withContext(Dispatchers.IO) {
+    ): ParsedMultiStatus = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(url).method(method, xml.toRequestBody("application/xml; charset=utf-8".toMediaType()))
         headers.forEach(builder::header)
         execute(account, password, builder).use {
@@ -177,8 +249,11 @@ class OkHttpDavClient(
         return http.newCall(builder.header("Authorization", Credentials.basic(account.username, passwordString)).build()).execute()
     }
 
-    private fun parseMultiStatus(stream: InputStream): List<DavResource> {
-        val parser = Xml.newPullParser().apply { setInput(stream, Charsets.UTF_8.name()) }
+    internal fun parseMultiStatus(stream: InputStream, parser: XmlPullParser = Xml.newPullParser()): ParsedMultiStatus {
+        parser.apply {
+            setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+            setInput(stream, Charsets.UTF_8.name())
+        }
         val result = mutableListOf<DavResource>()
         var response: MutableMap<String, String>? = null
         val tagStack = ArrayDeque<String>()
@@ -186,6 +261,7 @@ class OkHttpDavClient(
         var isCalendar = false
         var events = false
         var tasks = false
+        var syncToken: String? = null
         while (parser.eventType != XmlPullParser.END_DOCUMENT) {
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> {
@@ -213,15 +289,20 @@ class OkHttpDavClient(
                         }
                     }
                 }
-                XmlPullParser.TEXT -> if (response != null && parser.text.isNotBlank() && tagStack.isNotEmpty()) {
+                XmlPullParser.TEXT -> if (parser.text.isNotBlank() && tagStack.isNotEmpty()) {
                     val currentTag = tagStack.last()
                     val parentTag = tagStack.elementAtOrNull(tagStack.size - 2)
-                    val key = when {
-                        currentTag == "href" && parentTag == "current-user-principal" -> "current-user-principal"
-                        currentTag == "href" && parentTag == "calendar-home-set" -> "calendar-home-set"
-                        else -> currentTag
+                    if (response == null && currentTag == "sync-token") {
+                        syncToken = (syncToken.orEmpty() + parser.text).trim()
+                    } else if (response != null) {
+                        val key = when {
+                            currentTag == "href" && parentTag == "current-user-principal" -> "current-user-principal"
+                            currentTag == "href" && parentTag == "calendar-home-set" -> "calendar-home-set"
+                            currentTag == "status" && parentTag == "response" -> "response-status"
+                            else -> currentTag
+                        }
+                        response[key] = (response[key].orEmpty() + parser.text).trim()
                     }
-                    response[key] = (response[key].orEmpty() + parser.text).trim()
                 }
                 XmlPullParser.END_TAG -> {
                     if (parser.name.equals("response", true) && response != null) {
@@ -233,7 +314,8 @@ class OkHttpDavClient(
                                 etag = r["getetag"], contentType = r["getcontenttype"], size = r["getcontentlength"]?.toLongOrNull(),
                                 modifiedAt = r["getlastmodified"]?.let(::httpDate), calendarData = r["calendar-data"],
                                 syncToken = r["sync-token"], ctag = r["getctag"], currentUserPrincipalHref = r["current-user-principal"],
-                                calendarHomeHref = r["calendar-home-set"]
+                                calendarHomeHref = r["calendar-home-set"],
+                                deleted = r["response-status"]?.contains(" 404 ") == true
                             )
                         }
                         response = null
@@ -243,13 +325,19 @@ class OkHttpDavClient(
             }
             parser.next()
         }
-        return result
+        return ParsedMultiStatus(result, syncToken)
     }
 
     private fun httpDate(value: String) = runCatching {
         ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
     }.getOrNull()
     private fun resolve(base: String, href: String): String = URI(base).resolve(href).toString()
+    private fun xmlEscape(value: String) = value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&apos;")
 
     companion object {
         private const val DISCOVERY_PROPERTIES = "<d:current-user-principal/><c:calendar-home-set/>"

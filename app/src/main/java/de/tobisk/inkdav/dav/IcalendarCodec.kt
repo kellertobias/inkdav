@@ -1,6 +1,7 @@
 package de.tobisk.inkdav.dav
 
 import de.tobisk.inkdav.data.CalendarEventEntity
+import de.tobisk.inkdav.data.CalendarTimeMath
 import de.tobisk.inkdav.data.DavTaskEntity
 import java.time.Instant
 import java.time.LocalDate
@@ -22,7 +23,16 @@ object IcalendarCodec {
         val events = components(lines, "VEVENT").mapNotNull { fields ->
             val uid = fields.value("UID") ?: return@mapNotNull null
             val start = fields.date("DTSTART") ?: return@mapNotNull null
-            val end = fields.date("DTEND") ?: start.copy(epochMillis = start.epochMillis + if (start.allDay) 86_400_000 else 3_600_000)
+            val end = fields.date("DTEND") ?: start.copy(
+                epochMillis = if (start.allDay) {
+                    CalendarTimeMath.nextLocalDay(
+                        start.epochMillis,
+                        runCatching { start.timezone?.let(ZoneId::of) }.getOrNull() ?: ZoneId.systemDefault()
+                    )
+                } else {
+                    start.epochMillis + 3_600_000
+                }
+            )
             CalendarEventEntity(
                 id = stableId(collectionId, uid, fields.value("RECURRENCE-ID")),
                 collectionId = collectionId, remoteHref = href, uid = uid, etag = etag,
@@ -35,7 +45,7 @@ object IcalendarCodec {
                 rawIcal = input
             )
         }
-        val tasks = components(lines, "VTODO").mapNotNull { fields ->
+        val tasks = components(lines, "VTODO").filter { it.value("RECURRENCE-ID") == null }.mapNotNull { fields ->
             val uid = fields.value("UID") ?: return@mapNotNull null
             DavTaskEntity(
                 id = stableId(collectionId, uid, null), collectionId = collectionId,
@@ -106,6 +116,47 @@ object IcalendarCodec {
         )
     }
 
+    fun upsertEventException(
+        raw: String,
+        master: CalendarEventEntity,
+        originalStartMillis: Long,
+        changed: CalendarEventEntity,
+        cancelled: Boolean = false
+    ): Pair<String, String> {
+        val lines = unfold(raw)
+        val masterStart = lines.firstOrNull {
+            it.substringBefore(';').substringBefore(':').equals("DTSTART", true)
+        }
+        val recurrenceLine = dateLineLike("RECURRENCE-ID", originalStartMillis, masterStart)
+        val recurrenceValue = recurrenceLine.substringAfter(':')
+        val existing = components(lines, "VEVENT").any { it.value("RECURRENCE-ID") == recurrenceValue }
+        if (existing) {
+            val patched = patchEvent(raw, recurrenceValue, changed)
+            return if (cancelled) setComponentStatus(patched, "VEVENT", recurrenceValue, "CANCELLED") to recurrenceValue else patched to recurrenceValue
+        }
+
+        val calendarEnd = lines.indexOfLast { it.equals("END:VCALENDAR", true) }
+        require(calendarEnd >= 0) { "Invalid VCALENDAR" }
+        val masterEnd = lines.firstOrNull {
+            it.substringBefore(';').substringBefore(':').equals("DTEND", true)
+        }
+        val component = buildList {
+            add("BEGIN:VEVENT")
+            add("UID:${escape(master.uid)}")
+            add("DTSTAMP:${utc(System.currentTimeMillis())}")
+            add(recurrenceLine)
+            add(if (changed.allDay) dateLine("DTSTART", changed.startEpochMillis, true) else dateLineLike("DTSTART", changed.startEpochMillis, masterStart))
+            add(if (changed.allDay) dateLine("DTEND", changed.endEpochMillis, true) else dateLineLike("DTEND", changed.endEpochMillis, masterEnd ?: masterStart))
+            add("SUMMARY:${escape(changed.title)}")
+            if (changed.description.isNotBlank()) add("DESCRIPTION:${escape(changed.description)}")
+            if (changed.location.isNotBlank()) add("LOCATION:${escape(changed.location)}")
+            if (cancelled) add("STATUS:CANCELLED")
+            add("END:VEVENT")
+        }
+        val updated = lines.toMutableList().apply { addAll(calendarEnd, component) }.joinToString("\r\n", postfix = "\r\n")
+        return updated to recurrenceValue
+    }
+
     fun patchTask(raw: String, task: DavTaskEntity): String = patchComponent(
         raw,
         "VTODO",
@@ -118,6 +169,33 @@ object IcalendarCodec {
             "COMPLETED" to task.completedAt?.let { "COMPLETED:${utc(it)}" }
         )
     )
+
+    fun completeRecurringTask(raw: String, task: DavTaskEntity, occurrenceMillis: Long, completedMillis: Long): String {
+        val lines = unfold(raw).toMutableList()
+        val calendarEnd = lines.indexOfLast { it.equals("END:VCALENDAR", true) }
+        require(calendarEnd >= 0) { "Invalid VCALENDAR" }
+        val sourceDate = lines.firstOrNull {
+            val name = it.substringBefore(';').substringBefore(':')
+            name.equals("DUE", true) || name.equals("DTSTART", true)
+        }
+        val recurrenceLine = dateLineLike("RECURRENCE-ID", occurrenceMillis, sourceDate)
+        val dueLine = dateLineLike("DUE", occurrenceMillis, sourceDate)
+        lines.addAll(
+            calendarEnd,
+            listOf(
+                "BEGIN:VTODO",
+                "UID:${escape(task.uid)}",
+                "DTSTAMP:${utc(completedMillis)}",
+                recurrenceLine,
+                dueLine,
+                "SUMMARY:${escape(task.title)}",
+                "STATUS:COMPLETED",
+                "COMPLETED:${utc(completedMillis)}",
+                "END:VTODO"
+            )
+        )
+        return lines.joinToString("\r\n", postfix = "\r\n")
+    }
 
     private data class DatePatch(val epochMillis: Long, val allDay: Boolean, val timezone: String?)
 
@@ -165,7 +243,29 @@ object IcalendarCodec {
         return lines.joinToString("\r\n", postfix = "\r\n")
     }
 
+    private fun setComponentStatus(raw: String, component: String, recurrenceId: String, status: String): String = patchComponent(
+        raw,
+        component,
+        recurrenceId,
+        mapOf("STATUS" to "STATUS:$status")
+    )
+
     private fun dateLine(name: String, epoch: Long, allDay: Boolean) = if (allDay) "$name;VALUE=DATE:${day(epoch)}" else "$name:${utc(epoch)}"
+
+    private fun dateLineLike(name: String, epoch: Long, original: String?): String {
+        val originalHead = original?.substringBefore(':').orEmpty()
+        val parameters = originalHead.substringAfter(';', "")
+        val timezone = Regex("(?:^|;)TZID=([^;:]+)", RegexOption.IGNORE_CASE).find(";$parameters")?.groupValues?.get(1)
+        return when {
+            parameters.contains("VALUE=DATE", true) -> "$name;VALUE=DATE:${day(epoch)}"
+            timezone != null -> {
+                val value = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")
+                    .format(Instant.ofEpochMilli(epoch).atZone(ZoneId.of(timezone)))
+                "$name;$parameters:$value"
+            }
+            else -> "$name:${utc(epoch)}"
+        }
+    }
 
     private fun dateLine(name: String, patch: DatePatch, original: String?): String {
         val zone = runCatching { patch.timezone?.let(ZoneId::of) }.getOrNull() ?: ZoneId.systemDefault()

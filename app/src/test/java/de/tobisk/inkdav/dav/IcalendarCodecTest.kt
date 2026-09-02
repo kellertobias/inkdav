@@ -2,6 +2,7 @@ package de.tobisk.inkdav.dav
 
 import de.tobisk.inkdav.data.CalendarEventEntity
 import java.time.Instant
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -102,5 +103,48 @@ END:VCALENDAR"""
         val patched = IcalendarCodec.patchEvent(raw, null, movedOneHour)
         assertTrue(patched.contains("DTSTART;TZID=Europe/Berlin:20261020T100000"))
         assertTrue(patched.contains("DTEND;TZID=Europe/Berlin:20261020T110000"))
+    }
+
+    @Test fun upsertsAndCancelsOneRecurringOccurrence() {
+        val raw = """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:series
+DTSTART;TZID=Europe/Berlin:20260902T090000
+DTEND;TZID=Europe/Berlin:20260902T100000
+RRULE:FREQ=WEEKLY;COUNT=2
+SUMMARY:Series
+END:VEVENT
+END:VCALENDAR"""
+        val zone = ZoneId.of("Europe/Berlin")
+        val master = IcalendarCodec.parse("cal", "/series.ics", "tag", raw).events.single()
+        val original = java.time.ZonedDateTime.of(2026, 9, 9, 9, 0, 0, 0, zone).toInstant().toEpochMilli()
+        val changed = master.copy(
+            title = "Only this one",
+            startEpochMillis = original + 3_600_000,
+            endEpochMillis = original + 7_200_000,
+            recurrenceRule = null
+        )
+        val (edited, _) = IcalendarCodec.upsertEventException(raw, master, original, changed)
+        val editedProjection = RecurrenceProjector.project(
+            "cal",
+            "/series.ics",
+            edited,
+            Instant.parse("2026-09-01T00:00:00Z").toEpochMilli(),
+            Instant.parse("2026-09-20T00:00:00Z").toEpochMilli(),
+            zone
+        )
+        assertEquals(listOf("Series", "Only this one"), editedProjection.map { it.title })
+
+        val (cancelled, _) = IcalendarCodec.upsertEventException(edited, master.copy(rawIcal = edited), original, changed, true)
+        val cancelledProjection = RecurrenceProjector.project(
+            "cal",
+            "/series.ics",
+            cancelled,
+            Instant.parse("2026-09-01T00:00:00Z").toEpochMilli(),
+            Instant.parse("2026-09-20T00:00:00Z").toEpochMilli(),
+            zone
+        )
+        assertEquals(1, cancelledProjection.size)
     }
 }
