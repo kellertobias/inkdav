@@ -29,4 +29,15 @@ class CalendarLayoutTest {
         assertEquals(thursday.plusDays(1), stepDate(thursday, CalendarMode.WEEK, 1, isPortrait = true))
         assertEquals(thursday.minusWeeks(1), stepDate(thursday, CalendarMode.WEEK, -1, isPortrait = false))
     }
+
+    @Test
+    fun september2026UsesOnlyFiveCalendarRows() {
+        assertEquals(5, monthWeekCount(LocalDate.of(2026, 9, 1)))
+    }
+
+    @Test
+    fun monthGridStillSupportsFourAndSixWeekMonths() {
+        assertEquals(4, monthWeekCount(LocalDate.of(2021, 2, 1)))
+        assertEquals(6, monthWeekCount(LocalDate.of(2026, 8, 1)))
+    }
 }

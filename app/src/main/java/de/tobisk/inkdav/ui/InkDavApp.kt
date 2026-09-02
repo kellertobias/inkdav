@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.BatteryManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -53,6 +54,7 @@ import de.tobisk.inkdav.update.UpdateInstaller
 import de.tobisk.inkdav.update.UpdateState
 import java.time.*
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -106,6 +108,7 @@ fun InkDavApp(model: MainViewModel) {
         )
     ) {
         Column(Modifier.fillMaxSize().background(Paper).safeDrawingPadding()) {
+            InkStatusBar()
             TopNavigation(destination) { model.destination.value = it }
             if (destination == Destination.CALENDAR) {
                 CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts)
@@ -153,6 +156,43 @@ fun InkDavApp(model: MainViewModel) {
         )
     }
     editingTask?.let { EditTaskDialog(it, { model.editingTask.value = null }, model::updateTask, model::deleteTask) }
+}
+
+@Composable
+private fun InkStatusBar() {
+    val context = LocalContext.current
+    val battery = remember(context) { context.getSystemService(BatteryManager::class.java) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val current = System.currentTimeMillis()
+            now = current
+            delay(60_000L - current % 60_000L)
+        }
+    }
+    val dateTime = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault())
+    val batteryPercent = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+    val charging = battery?.isCharging == true
+    Row(
+        Modifier.fillMaxWidth().height(34.dp).background(Paper).border(1.dp, Ink).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("InkDAV", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(12.dp))
+        Text(dateTime.format(DateTimeFormatter.ofPattern("EEE, d MMM")), fontSize = 13.sp, color = MutedInk)
+        Spacer(Modifier.weight(1f))
+        Text(
+            buildString {
+                if (charging) append("CHG  ")
+                append("BAT ")
+                append(batteryPercent?.let { "$it%" } ?: "—")
+            },
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.width(18.dp))
+        Text(dateTime.format(DateTimeFormatter.ofPattern("HH:mm")), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    }
 }
 
 @Composable
@@ -425,6 +465,7 @@ private fun MonthView(
 ) {
     val month = date.withDayOfMonth(1)
     val first = month.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val weekCount = monthWeekCount(month)
     val collectionMap = collections.associateBy(DavCollectionEntity::id)
     Column(Modifier.fillMaxSize().border(1.dp, Rule)) {
         Row(Modifier.fillMaxWidth().height(36.dp)) {
@@ -434,7 +475,7 @@ private fun MonthView(
                 }
             }
         }
-        repeat(6) { week ->
+        repeat(weekCount) { week ->
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 repeat(7) { offset ->
                     val day = first.plusDays((week * 7 + offset).toLong())
@@ -2030,6 +2071,13 @@ private fun Modifier.noRippleClick(action: () -> Unit) = composed {
 internal fun displayedWeekDays(date: LocalDate, isPortrait: Boolean): List<LocalDate> {
     val first = if (isPortrait) date else date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     return List(if (isPortrait) 3 else 7) { first.plusDays(it.toLong()) }
+}
+
+internal fun monthWeekCount(date: LocalDate): Int {
+    val month = date.withDayOfMonth(1)
+    val first = month.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val last = month.with(TemporalAdjusters.lastDayOfMonth())
+    return ChronoUnit.WEEKS.between(first, last.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))).toInt() + 1
 }
 
 internal fun stepDate(date: LocalDate, mode: CalendarMode, direction: Long, isPortrait: Boolean) = when (mode) {
