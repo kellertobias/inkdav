@@ -1,5 +1,6 @@
 package de.tobisk.inkdav.ui
 
+import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -11,10 +12,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,6 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +38,7 @@ import de.tobisk.inkdav.tasks.ScheduleBucketer
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
+import kotlinx.coroutines.delay
 
 private val Paper = Color(0xfffaf9f4)
 private val Ink = Color(0xff111111)
@@ -44,6 +46,7 @@ private val MutedInk = Color(0xff4b5563)
 private val Rule = Color(0xff59636e)
 private val Accent = Color(0xff294c60)
 private val Warning = Color(0xff7a351b)
+private val CurrentTime = Color(0xffb3261e)
 
 @Composable
 fun InkDavApp(model: MainViewModel) {
@@ -74,7 +77,7 @@ fun InkDavApp(model: MainViewModel) {
             )
         )
     ) {
-        Column(Modifier.fillMaxSize().background(Paper)) {
+        Column(Modifier.fillMaxSize().background(Paper).safeDrawingPadding()) {
             TopNavigation(destination) { model.destination.value = it }
             if (destination == Destination.CALENDAR) {
                 CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts)
@@ -193,6 +196,7 @@ private fun CalendarHeader(
 ) {
     var showViewMenu by remember { mutableStateOf(false) }
     var showCalendars by remember { mutableStateOf(false) }
+    val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     Row(
         Modifier.fillMaxWidth().heightIn(min = 66.dp).border(1.dp, Rule).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -236,8 +240,8 @@ private fun CalendarHeader(
             }
         }
         InkButton("Today") { model.selectedDate.value = LocalDate.now() }
-        InkButton("‹") { model.selectedDate.value = stepDate(date, mode, -1) }
-        InkButton("›") { model.selectedDate.value = stepDate(date, mode, 1) }
+        InkButton("‹") { model.selectedDate.value = stepDate(date, mode, -1, isPortrait) }
+        InkButton("›") { model.selectedDate.value = stepDate(date, mode, 1, isPortrait) }
         HeaderIconButton("▦", "Choose shown calendars") { showCalendars = true }
     }
     if (showCalendars) {
@@ -417,34 +421,45 @@ private fun MonthView(
 
 @Composable
 private fun YearView(date: LocalDate, events: List<CalendarOccurrenceEntity>, model: MainViewModel) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items((1..12).toList()) { monthNumber ->
-            val month = LocalDate.of(date.year, monthNumber, 1)
-            Column(
-                Modifier.border(1.dp, Rule).noRippleClick {
-                    model.selectedDate.value = month
-                    model.calendarMode.value =
-                        CalendarMode.MONTH
-                }.padding(8.dp)
-            ) {
-                Text(month.month.name.lowercase().replaceFirstChar(Char::uppercase), fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Spacer(Modifier.height(4.dp))
-                repeat(6) { week ->
-                    Row(Modifier.fillMaxWidth()) {
-                        repeat(7) { offset ->
-                            val first = month.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                            val day = first.plusDays((week * 7 + offset).toLong())
-                            val count = events.count { eventDate(it.startEpochMillis) == day }
-                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(if (day.month == month.month) day.dayOfMonth.toString() else "", fontSize = 10.sp)
-                                Text(if (count == 0) "" else "•".repeat(count.coerceAtMost(3)), fontSize = 8.sp, lineHeight = 8.sp)
-                            }
-                        }
+    val eventCounts = remember(events) { events.groupingBy { eventDate(it.startEpochMillis) }.eachCount() }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(4) { row ->
+            Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(3) { column ->
+                    val month = LocalDate.of(date.year, row * 3 + column + 1, 1)
+                    YearMonth(
+                        month = month,
+                        eventCounts = eventCounts,
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    ) {
+                        model.selectedDate.value = month
+                        model.calendarMode.value = CalendarMode.MONTH
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YearMonth(
+    month: LocalDate,
+    eventCounts: Map<LocalDate, Int>,
+    modifier: Modifier = Modifier,
+    open: () -> Unit
+) {
+    val first = month.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    Column(modifier.border(1.dp, Rule).noRippleClick(open).padding(6.dp)) {
+        Text(month.month.name.lowercase().replaceFirstChar(Char::uppercase), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Spacer(Modifier.height(2.dp))
+        repeat(6) { week ->
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                repeat(7) { offset ->
+                    val day = first.plusDays((week * 7 + offset).toLong())
+                    val count = eventCounts[day] ?: 0
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(if (day.month == month.month) day.dayOfMonth.toString() else "", fontSize = 10.sp, lineHeight = 11.sp)
+                        Text(if (count == 0) "" else "•".repeat(count.coerceAtMost(3)), fontSize = 7.sp, lineHeight = 7.sp)
                     }
                 }
             }
@@ -460,47 +475,89 @@ private fun WeekView(
     model: MainViewModel,
     addEvent: (LocalDate) -> Unit
 ) {
-    val first = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-    Row(Modifier.fillMaxSize().border(1.dp, Rule)) {
-        repeat(7) { index ->
-            val day = first.plusDays(index.toLong())
-            val dayEvents = events.filter { eventDate(it.startEpochMillis) == day }
-            Column(
-                Modifier.weight(1f).fillMaxHeight().border(
-                    if (day ==
-                        LocalDate.now()
-                    ) {
-                        2.dp
-                    } else {
-                        0.5.dp
-                    },
-                    Rule
-                ).noRippleClick {
-                    model.selectedDate.value = day
-                    model.calendarMode.value =
-                        CalendarMode.DAY
-                }
-            ) {
-                Row(Modifier.fillMaxWidth().padding(6.dp), verticalAlignment = Alignment.Top) {
-                    Text("${day.dayOfWeek.name.take(3)}\n${day.dayOfMonth}", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    DayAddButton("Add event on ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}") { addEvent(day) }
-                }
-                dayEvents.forEach { event ->
-                    val time = if (event.allDay) {
-                        "All day"
-                    } else {
-                        Instant.ofEpochMilli(
-                            event.startEpochMillis
-                        ).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+    val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+    val days = remember(date, isPortrait) { displayedWeekDays(date, isPortrait) }
+    val collectionMap = remember(collections) { collections.associateBy(DavCollectionEntity::id) }
+    val allDayByDate = remember(events) {
+        events.filter(CalendarOccurrenceEntity::allDay).groupBy { eventDate(it.startEpochMillis) }
+    }
+    val timedBySlot = remember(events) {
+        events.filterNot(CalendarOccurrenceEntity::allDay).groupBy { occurrence ->
+            val start = Instant.ofEpochMilli(occurrence.startEpochMillis).atZone(ZoneId.systemDefault())
+            start.toLocalDate() to start.hour
+        }
+    }
+    var now by remember { mutableStateOf(ZonedDateTime.now()) }
+    val hourListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = if (now.toLocalDate() in days) (now.hour - 1).coerceAtLeast(0) else 7
+    )
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            now = ZonedDateTime.now()
+        }
+    }
+    Column(Modifier.fillMaxSize().border(1.dp, Rule)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 62.dp)) {
+            Box(Modifier.width(50.dp).fillMaxHeight().border(0.5.dp, Rule), contentAlignment = Alignment.BottomCenter) {
+                Text("TIME", fontSize = 10.sp, color = MutedInk, modifier = Modifier.padding(bottom = 5.dp))
+            }
+            days.forEach { day ->
+                val allDayEvents = allDayByDate[day].orEmpty()
+                Column(
+                    Modifier.weight(1f).fillMaxHeight().border(if (day == now.toLocalDate()) 2.dp else 0.5.dp, Rule)
+                        .padding(horizontal = 5.dp, vertical = 3.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Text(day.format(DateTimeFormatter.ofPattern("EEE d")), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        DayAddButton("Add event on ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}") { addEvent(day) }
                     }
-                    Column(
-                        Modifier.fillMaxWidth().padding(3.dp).border(
-                            1.dp,
-                            collections.firstOrNull { it.id == event.collectionId }?.colorArgb?.let(::Color) ?: Rule
-                        ).padding(5.dp)
-                    ) {
-                        Text(time, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Text(event.title, maxLines = 3, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                    Text(
+                        allDayEvents.joinToString(" · ") { it.title.ifBlank { "(Untitled)" } },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        }
+        LazyColumn(Modifier.fillMaxWidth().weight(1f), state = hourListState) {
+            items((0..23).toList()) { hour ->
+                Row(Modifier.fillMaxWidth().height(68.dp)) {
+                    Box(Modifier.width(50.dp).fillMaxHeight().border(0.5.dp, Rule), contentAlignment = Alignment.TopCenter) {
+                        Text("%02d:00".format(hour), fontSize = 11.sp, color = MutedInk, modifier = Modifier.padding(top = 3.dp))
+                    }
+                    days.forEach { day ->
+                        val timedEvents = timedBySlot[day to hour].orEmpty()
+                        Box(Modifier.weight(1f).fillMaxHeight().border(0.5.dp, Rule)) {
+                            Column(Modifier.fillMaxSize().padding(3.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                timedEvents.forEach { event ->
+                                    val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault())
+                                    Text(
+                                        "${start.format(DateTimeFormatter.ofPattern("HH:mm"))} ${event.title.ifBlank { "(Untitled)" }}",
+                                        modifier = Modifier.fillMaxWidth().border(
+                                            1.dp,
+                                            collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Rule
+                                        ).noRippleClick { model.openOccurrence(event) }.padding(horizontal = 3.dp, vertical = 2.dp),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontSize = 11.sp,
+                                        lineHeight = 12.sp
+                                    )
+                                }
+                            }
+                            if (day == now.toLocalDate() && hour == now.hour) {
+                                Box(
+                                    Modifier.align(Alignment.TopStart).offset(y = (68f * now.minute / 60f).dp)
+                                        .fillMaxWidth().height(2.dp).background(CurrentTime)
+                                        .semantics { contentDescription = "Current time ${now.format(DateTimeFormatter.ofPattern("HH:mm"))}" }
+                                )
+                                Box(
+                                    Modifier.align(Alignment.TopStart).offset(y = (68f * now.minute / 60f - 3f).dp)
+                                        .size(8.dp).background(CurrentTime)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1031,36 +1088,45 @@ private fun EventEditor(
     var selected by remember { mutableStateOf(calendars.firstOrNull()?.id.orEmpty()) }
     var allDay by remember { mutableStateOf(false) }
     var hour by remember { mutableIntStateOf(9) }
-    AlertDialog(onDismissRequest = close, title = { Text("New event · ${date.format(DateTimeFormatter.ofPattern("d MMM"))}") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(title, { title = it }, label = { Text("Title") })
-            Text("Calendar", fontWeight = FontWeight.Bold)
-            calendars.forEach { InkButton(it.displayName, selected == it.id, Modifier.fillMaxWidth()) { selected = it.id } }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(allDay, { allDay = it })
-                Text("All day")
-            }
-            if (!allDay) {
+    AlertDialog(
+        onDismissRequest = close,
+        modifier = Modifier.border(2.dp, Ink, RectangleShape),
+        shape = RectangleShape,
+        containerColor = Paper,
+        tonalElevation = 0.dp,
+        title = { Text("New event · ${date.format(DateTimeFormatter.ofPattern("d MMM"))}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(title, { title = it }, label = { Text("Title") })
+                Text("Calendar", fontWeight = FontWeight.Bold)
+                calendars.forEach { InkButton(it.displayName, selected == it.id, Modifier.fillMaxWidth()) { selected = it.id } }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Start $hour:00")
-                    Spacer(Modifier.weight(1f))
-                    InkButton("−") {
-                        hour =
-                            (hour + 23) % 24
+                    Checkbox(allDay, { allDay = it })
+                    Text("All day")
+                }
+                if (!allDay) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Start $hour:00")
+                        Spacer(Modifier.weight(1f))
+                        InkButton("−") {
+                            hour =
+                                (hour + 23) % 24
+                        }
+                        InkButton("+") { hour = (hour + 1) % 24 }
                     }
-                    InkButton("+") { hour = (hour + 1) % 24 }
                 }
             }
-        }
-    }, confirmButton = {
-        InkButton("Create offline") {
-            if (title.isNotBlank() &&
-                selected.isNotBlank()
-            ) {
-                save(selected, title, allDay, hour)
+        }, confirmButton = {
+            InkButton("Create offline") {
+                if (title.isNotBlank() &&
+                    selected.isNotBlank()
+                ) {
+                    save(selected, title, allDay, hour)
+                }
             }
-        }
-    }, dismissButton = { InkButton("Cancel", action = close) })
+        },
+        dismissButton = { InkButton("Cancel", action = close) }
+    )
 }
 
 @Composable
@@ -1264,10 +1330,15 @@ private fun EditTaskDialog(
 private fun Modifier.noRippleClick(action: () -> Unit) = composed {
     clickable(remember { MutableInteractionSource() }, null, onClick = action)
 }
-private fun stepDate(date: LocalDate, mode: CalendarMode, direction: Long) = when (mode) {
+internal fun displayedWeekDays(date: LocalDate, isPortrait: Boolean): List<LocalDate> {
+    val first = if (isPortrait) date else date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    return List(if (isPortrait) 3 else 7) { first.plusDays(it.toLong()) }
+}
+
+internal fun stepDate(date: LocalDate, mode: CalendarMode, direction: Long, isPortrait: Boolean) = when (mode) {
     CalendarMode.YEAR -> date.plusYears(direction)
     CalendarMode.MONTH -> date.plusMonths(direction)
-    CalendarMode.WEEK -> date.plusWeeks(direction)
+    CalendarMode.WEEK -> if (isPortrait) date.plusDays(direction) else date.plusWeeks(direction)
     CalendarMode.DAY -> date.plusDays(direction)
 }
 private fun calendarTitle(date: LocalDate, mode: CalendarMode) = when (mode) {

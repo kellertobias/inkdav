@@ -296,7 +296,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val end = when (mode) {
             CalendarMode.YEAR -> start.plusYears(1)
             CalendarMode.MONTH -> start.plusDays(42)
-            CalendarMode.WEEK -> start.plusDays(7)
+            CalendarMode.WEEK -> start.plusDays(14)
             CalendarMode.DAY -> start.plusDays(1)
         }
         return start.atStartOfDay(zone).toInstant().toEpochMilli() to end.atStartOfDay(zone).toInstant().toEpochMilli()
