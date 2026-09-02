@@ -1,12 +1,9 @@
-name: CodeQL
+name: Scheduled CodeQL
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   schedule:
     - cron: "23 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,8 +25,8 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@v4
       - run: sdkmanager "platforms;android-36"
-      - uses: github/codeql-action/init@v4.37.0
+      - uses: github/codeql-action/init@v4.37.9
         with:
           languages: java-kotlin
       - run: ./gradlew --no-daemon compileDebugKotlin
-      - uses: github/codeql-action/analyze@v4.37.0
+      - uses: github/codeql-action/analyze@v4.37.9

@@ -14,5 +14,7 @@ esac
 node scripts/set-version.mjs "$version"
 ./gradlew --no-daemon ktlintCheck testDebugUnitTest lintRelease assembleRelease
 mkdir -p dist
-cp app/build/outputs/apk/release/app-release.apk "dist/InkDAV-v${version}.apk"
-shasum -a 256 "dist/InkDAV-v${version}.apk" > "dist/InkDAV-v${version}.apk.sha256"
+artifact="InkDAV-v${version}-boox-note-air5c.apk"
+cp app/build/outputs/apk/release/app-release.apk "dist/$artifact"
+./scripts/verify-boox-apk.sh "dist/$artifact" "$version" signed
+(cd dist && sha256sum "$artifact" > "$artifact.sha256")

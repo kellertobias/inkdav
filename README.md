@@ -35,9 +35,9 @@ Canonical development checks:
 ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug
 ```
 
-GitHub Actions runs formatting, JVM tests, debug/release lint, debug and minified release builds, Room migration tests on an Android emulator, and CodeQL. It retains the debug APK as a workflow artifact. See [docs/RELEASING.md](docs/RELEASING.md) for signed semantic releases.
+GitHub Actions runs formatting, JVM tests, debug/release lint, debug and minified release builds, Room migration and DAV contract tests on an Android 15 emulator, CodeQL, and an explicit BOOX compatibility check. Every successful main-branch run retains an installable debug APK for the Note Air5 C. A successful push run then gates the signed semantic-release transaction; see [docs/RELEASING.md](docs/RELEASING.md).
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+The local debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Hosted releases provide `InkDAV-vVERSION-boox-note-air5c.apk`, a signed universal APK with ARM64 native libraries for the Android 15 Note Air5 C.
 
 To install on a USB- or network-ADB-connected BOOX tablet:
 

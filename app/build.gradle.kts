@@ -34,11 +34,13 @@ android {
     val releaseStorePassword = System.getenv("INKDAV_KEYSTORE_PASSWORD")
     val releaseKeyAlias = System.getenv("INKDAV_KEY_ALIAS")
     val releaseKeyPassword = System.getenv("INKDAV_KEY_PASSWORD")
+    val releaseStoreType = System.getenv("INKDAV_KEYSTORE_TYPE") ?: "JKS"
     val hasReleaseSigning = listOf(releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
 
     if (hasReleaseSigning) {
         signingConfigs.create("release") {
             storeFile = file(requireNotNull(releaseKeystore))
+            storeType = releaseStoreType
             storePassword = releaseStorePassword
             keyAlias = releaseKeyAlias
             keyPassword = releaseKeyPassword
