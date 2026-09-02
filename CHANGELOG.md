@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/kellertobias/[secure]/compare/v1.0.0...v1.0.1) (2026-09-02)
+
+### Bug Fixes
+
+* respect system bars and calendar layouts ([7c774e2](https://github.com/kellertobias/[secure]/commit/7c774e22fddf8364304679c35cdbfa6bb97674e5))
+
 ## 1.0.0 (2026-09-02)
 
 ### Features
