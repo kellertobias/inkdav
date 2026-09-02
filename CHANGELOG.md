@@ -1,3 +1,9 @@
+## [1.3.2](https://github.com/kellertobias/[secure]/compare/v1.3.1...v1.3.2) (2026-09-02)
+
+### Bug Fixes
+
+* parse DAV hrefs and clarify system bar ([663ef7d](https://github.com/kellertobias/[secure]/commit/663ef7dbc41347a859c9bfb689bce226aa17d02a))
+
 ## [1.3.1](https://github.com/kellertobias/[secure]/compare/v1.3.0...v1.3.1) (2026-09-02)
 
 ### Bug Fixes
