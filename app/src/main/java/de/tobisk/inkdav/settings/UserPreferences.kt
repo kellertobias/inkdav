@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -17,7 +18,8 @@ data class InkDavSettings(
     val wifiOnlyFiles: Boolean = true,
     val boldText: Boolean = true,
     val pageNavigation: Boolean = true,
-    val hiddenCalendarIds: Set<String> = emptySet()
+    val hiddenCalendarIds: Set<String> = emptySet(),
+    val localFilesRootUri: String? = null
 )
 
 class UserPreferences(private val context: Context) {
@@ -28,6 +30,7 @@ class UserPreferences(private val context: Context) {
         val boldText = booleanPreferencesKey("bold_text")
         val pageNavigation = booleanPreferencesKey("page_navigation")
         val hiddenCalendarIds = stringSetPreferencesKey("hidden_calendar_ids")
+        val localFilesRootUri = stringPreferencesKey("local_files_root_uri")
     }
 
     val settings: Flow<InkDavSettings> = context.dataStore.data.map { value ->
@@ -37,7 +40,8 @@ class UserPreferences(private val context: Context) {
             wifiOnlyFiles = value[Keys.wifiOnlyFiles] ?: true,
             boldText = value[Keys.boldText] ?: true,
             pageNavigation = value[Keys.pageNavigation] ?: true,
-            hiddenCalendarIds = value[Keys.hiddenCalendarIds] ?: emptySet()
+            hiddenCalendarIds = value[Keys.hiddenCalendarIds] ?: emptySet(),
+            localFilesRootUri = value[Keys.localFilesRootUri]
         )
     }
 
@@ -55,5 +59,9 @@ class UserPreferences(private val context: Context) {
         val hidden = (it[Keys.hiddenCalendarIds] ?: emptySet()).toMutableSet()
         if (visible) hidden.remove(collectionId) else hidden.add(collectionId)
         it[Keys.hiddenCalendarIds] = hidden
+    }
+
+    suspend fun setLocalFilesRoot(uri: String?) = context.dataStore.edit {
+        if (uri == null) it.remove(Keys.localFilesRootUri) else it[Keys.localFilesRootUri] = uri
     }
 }

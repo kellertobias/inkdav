@@ -7,6 +7,9 @@ import android.provider.DocumentsContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.tobisk.inkdav.data.*
+import de.tobisk.inkdav.files.LocalFileBrowser
+import de.tobisk.inkdav.files.LocalFileEntry
+import de.tobisk.inkdav.files.LocalFolderLocation
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.SyncWorker
 import de.tobisk.inkdav.tasks.RecurringTaskProjector
@@ -28,18 +31,17 @@ enum class Destination(val label: String, val mark: String) {
     SETTINGS("Settings", "⚙")
 }
 enum class CalendarMode { YEAR, MONTH, WEEK, DAY }
-enum class TaskMode { LISTS, SCHEDULE }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as InkDavApplication).container
     private val dao = container.database.dao()
     private val appUpdater = AppUpdater(application)
+    private val localFileBrowser = LocalFileBrowser(application)
 
     val destination = MutableStateFlow(Destination.CALENDAR)
     val selectedDate = MutableStateFlow(LocalDate.now())
     val calendarMode = MutableStateFlow(CalendarMode.MONTH)
-    val taskMode = MutableStateFlow(TaskMode.SCHEDULE)
     val selectedFileCollection = MutableStateFlow<String?>(null)
     val selectedFileParent = MutableStateFlow<String?>(null)
     val selectedMirror = MutableStateFlow<String?>(null)
@@ -47,6 +49,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val editingEvent = MutableStateFlow<CalendarEventEntity?>(null)
     val editingOccurrence = MutableStateFlow<CalendarOccurrenceEntity?>(null)
     val editingTask = MutableStateFlow<DavTaskEntity?>(null)
+    val localFiles = MutableStateFlow<List<LocalFileEntry>>(emptyList())
+    val localFolderStack = MutableStateFlow<List<LocalFolderLocation>>(emptyList())
+    val localFilesError = MutableStateFlow<String?>(null)
     val updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
 
     val accounts = dao.observeAccounts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -60,6 +65,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val conflictingTasks = dao.observeConflictingTasks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val mirrors = dao.observeMirrors().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val settings = container.preferences.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InkDavSettings())
+
+    init {
+        viewModelScope.launch {
+            container.preferences.settings.map { value -> value.localFilesRootUri }.distinctUntilChanged().collectLatest { root ->
+                if (root == null) {
+                    localFolderStack.value = emptyList()
+                    localFiles.value = emptyList()
+                } else if (localFolderStack.value.isEmpty()) {
+                    loadLocalRoot(root)
+                }
+            }
+        }
+    }
 
     val events = combine(selectedDate, calendarMode) { date, mode -> visibleInterval(date, mode) }
         .flatMapLatest { (start, end) -> dao.observeOccurrences(start, end) }
@@ -159,21 +177,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         WidgetUpdater.updateAll(getApplication())
     }
 
-    fun createEvent(collectionId: String, title: String, date: LocalDate, hour: Int, allDay: Boolean) {
+    fun createEvent(
+        collectionId: String,
+        title: String,
+        start: Long,
+        end: Long,
+        allDay: Boolean,
+        recurrenceRule: String?
+    ) {
         viewModelScope.launch {
-            val zone = ZoneId.systemDefault()
-            val start = date.atTime(if (allDay) LocalTime.MIDNIGHT else LocalTime.of(hour, 0)).atZone(zone).toInstant().toEpochMilli()
-            val end = if (allDay) CalendarTimeMath.nextLocalDay(start, zone) else start + 3_600_000
-            container.offlineRepository.createEvent(collectionId, title, start, end, allDay)
+            container.offlineRepository.createEvent(collectionId, title, start, end, allDay, recurrenceRule)
             WidgetUpdater.updateAll(getApplication())
             sync()
         }
     }
 
-    fun createTask(collectionId: String, title: String, due: LocalDate?) {
+    fun createTask(collectionId: String, title: String, due: LocalDate?, priority: Int = 0, notes: String = "") {
         viewModelScope.launch {
             val dueMillis = due?.atTime(9, 0)?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
-            container.offlineRepository.createTask(collectionId, title, dueMillis)
+            container.offlineRepository.createTask(collectionId, title, dueMillis, priority, notes)
             WidgetUpdater.updateAll(getApplication())
             sync()
         }
@@ -202,13 +224,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         start: Long,
         end: Long,
         allDay: Boolean,
+        recurrenceRule: String?,
         entireSeries: Boolean
     ) = viewModelScope.launch {
         val occurrence = editingOccurrence.value
         if (!entireSeries && occurrence != null && event.recurrenceRule != null) {
             container.offlineRepository.updateEventOccurrence(event, occurrence, title, description, location, start, end, allDay)
         } else {
-            container.offlineRepository.updateEvent(event, title, description, location, start, end, allDay)
+            container.offlineRepository.updateEvent(event, title, description, location, start, end, allDay, recurrenceRule)
         }
         editingEvent.value = null
         editingOccurrence.value = null
@@ -228,8 +251,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         WidgetUpdater.updateAll(getApplication())
         sync()
     }
-    fun updateTask(task: DavTaskEntity, title: String, notes: String, dueMillis: Long?) = viewModelScope.launch {
-        container.offlineRepository.updateTask(task, title, notes, dueMillis)
+    fun updateTask(task: DavTaskEntity, title: String, notes: String, dueMillis: Long?, priority: Int) = viewModelScope.launch {
+        container.offlineRepository.updateTask(task, title, notes, dueMillis, priority)
         editingTask.value = null
         WidgetUpdater.updateAll(getApplication())
         sync()
@@ -252,6 +275,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         selectedMirror.value = id
         selectedMirrorParent.value = ""
     }
+    fun selectLocalFiles() {
+        selectedFileCollection.value = null
+        selectedFileParent.value = null
+        selectedMirror.value = null
+    }
     fun openMirrorFolder(path: String) {
         selectedMirrorParent.value = path
     }
@@ -264,6 +292,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         runCatching { getApplication<Application>().startActivity(intent) }
+    }
+
+    fun setLocalFilesRoot(uri: Uri) = viewModelScope.launch {
+        val resolver = getApplication<Application>().contentResolver
+        val oldRoot = settings.value.localFilesRootUri
+        resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        container.preferences.setLocalFilesRoot(uri.toString())
+        if (oldRoot != null && oldRoot != uri.toString()) {
+            runCatching {
+                resolver.releasePersistableUriPermission(Uri.parse(oldRoot), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        loadLocalRoot(uri.toString())
+    }
+
+    fun clearLocalFilesRoot() = viewModelScope.launch {
+        settings.value.localFilesRootUri?.let { value ->
+            runCatching {
+                getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                    Uri.parse(value),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+        }
+        container.preferences.setLocalFilesRoot(null)
+        localFolderStack.value = emptyList()
+        localFiles.value = emptyList()
+        localFilesError.value = null
+    }
+
+    fun openLocalFolder(entry: LocalFileEntry) = viewModelScope.launch {
+        val root = settings.value.localFilesRootUri ?: return@launch
+        runCatching { localFileBrowser.folder(root, entry.relativePath, entry.name) }
+            .onSuccess { (location, children) ->
+                localFolderStack.value += location
+                localFiles.value = children
+                localFilesError.value = null
+            }.onFailure { localFilesError.value = it.message ?: "The folder could not be opened." }
+    }
+
+    fun upLocalFolder() = viewModelScope.launch {
+        val parentStack = localFolderStack.value.dropLast(1)
+        val parent = parentStack.lastOrNull() ?: return@launch
+        val root = settings.value.localFilesRootUri ?: return@launch
+        runCatching {
+            if (parent.relativePath.isBlank()) localFileBrowser.root(root) else localFileBrowser.folder(root, parent.relativePath, parent.name)
+        }.onSuccess { (_, children) ->
+            localFolderStack.value = parentStack
+            localFiles.value = children
+            localFilesError.value = null
+        }.onFailure { localFilesError.value = it.message ?: "The parent folder could not be opened." }
+    }
+
+    private suspend fun loadLocalRoot(uri: String) {
+        runCatching { localFileBrowser.root(uri) }
+            .onSuccess { (location, children) ->
+                localFolderStack.value = listOf(location)
+                localFiles.value = children
+                localFilesError.value = null
+            }.onFailure {
+                localFolderStack.value = emptyList()
+                localFiles.value = emptyList()
+                localFilesError.value = it.message ?: "The local file permission is unavailable."
+            }
     }
 
     fun openFolder(href: String) {

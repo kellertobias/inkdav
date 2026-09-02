@@ -1,8 +1,11 @@
 package de.tobisk.inkdav.dav
 
 import de.tobisk.inkdav.data.CalendarEventEntity
+import de.tobisk.inkdav.data.DavTaskEntity
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
+import java.util.TimeZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,6 +64,66 @@ END:VCALENDAR"""
         assertEquals("Archive invoice", task.title)
         assertEquals(Instant.parse("2026-09-02T12:00:00Z").toEpochMilli(), task.completedAt)
         assertEquals(null, task.dueEpochMillis)
+    }
+
+    @Test fun writesTaskPriority() {
+        val encoded = IcalendarCodec.encode(
+            DavTaskEntity(id = "task", collectionId = "list", uid = "task", title = "Important", priority = 1)
+        )
+
+        assertTrue(encoded.contains("PRIORITY:1\r\n"))
+        assertEquals(1, IcalendarCodec.parse("list", null, null, encoded).tasks.single().priority)
+    }
+
+    @Test fun patchCanAddAndRemoveTaskPriority() {
+        val task = DavTaskEntity(id = "task", collectionId = "list", uid = "task", title = "Priority")
+        val encoded = IcalendarCodec.encode(task)
+        val prioritized = IcalendarCodec.patchTask(encoded, task.copy(priority = 5))
+        assertTrue(prioritized.contains("PRIORITY:5\r\n"))
+
+        val cleared = IcalendarCodec.patchTask(prioritized, task)
+        assertTrue(!cleared.contains("PRIORITY:"))
+    }
+
+    @Test fun allDayEncodingUsesTheDeviceCalendarDate() {
+        val originalZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Berlin"))
+            val zone = ZoneId.systemDefault()
+            val start = LocalDate.of(2026, 9, 2).atStartOfDay(zone).toInstant().toEpochMilli()
+            val event = CalendarEventEntity(
+                id = "local-day",
+                collectionId = "calendar",
+                uid = "local-day",
+                title = "Local day",
+                startEpochMillis = start,
+                endEpochMillis = LocalDate.of(2026, 9, 3).atStartOfDay(zone).toInstant().toEpochMilli(),
+                allDay = true
+            )
+
+            val encoded = IcalendarCodec.encode(event)
+            assertTrue(encoded.contains("DTSTART;VALUE=DATE:20260902\r\n"))
+            assertTrue(encoded.contains("DTEND;VALUE=DATE:20260903\r\n"))
+        } finally {
+            TimeZone.setDefault(originalZone)
+        }
+    }
+
+    @Test fun patchCanAddAndRemoveEventRecurrence() {
+        val event = CalendarEventEntity(
+            id = "event",
+            collectionId = "calendar",
+            uid = "event",
+            title = "Recurring",
+            startEpochMillis = Instant.parse("2026-09-02T08:00:00Z").toEpochMilli(),
+            endEpochMillis = Instant.parse("2026-09-02T09:00:00Z").toEpochMilli()
+        )
+        val encoded = IcalendarCodec.encode(event)
+        val recurring = IcalendarCodec.patchEvent(encoded, null, event.copy(recurrenceRule = "FREQ=WEEKLY"))
+        assertTrue(recurring.contains("RRULE:FREQ=WEEKLY\r\n"))
+
+        val single = IcalendarCodec.patchEvent(recurring, null, event)
+        assertTrue(!single.contains("RRULE:"))
     }
 
     @Test fun offlinePatchPreservesAlarmAndUnknownProperties() {

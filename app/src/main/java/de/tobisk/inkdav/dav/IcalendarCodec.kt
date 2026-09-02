@@ -87,6 +87,7 @@ object IcalendarCodec {
         append("SUMMARY:").append(escape(task.title)).append("\r\n")
         optional("DESCRIPTION", task.notes)
         task.dueEpochMillis?.let { append("DUE:").append(utc(it)).append("\r\n") }
+        if (task.priority in 1..9) append("PRIORITY:").append(task.priority).append("\r\n")
         if (task.completedAt != null) {
             append("STATUS:COMPLETED\r\nCOMPLETED:").append(utc(task.completedAt)).append("\r\n")
         } else {
@@ -102,7 +103,8 @@ object IcalendarCodec {
             "DTEND" to dateLine("DTEND", event.endEpochMillis, event.allDay),
             "SUMMARY" to "SUMMARY:${escape(event.title)}",
             "DESCRIPTION" to event.description.takeIf(String::isNotBlank)?.let { "DESCRIPTION:${escape(it)}" },
-            "LOCATION" to event.location.takeIf(String::isNotBlank)?.let { "LOCATION:${escape(it)}" }
+            "LOCATION" to event.location.takeIf(String::isNotBlank)?.let { "LOCATION:${escape(it)}" },
+            "RRULE" to event.recurrenceRule?.let { "RRULE:$it" }
         )
         return patchComponent(
             raw,
@@ -165,6 +167,7 @@ object IcalendarCodec {
             "SUMMARY" to "SUMMARY:${escape(task.title)}",
             "DESCRIPTION" to task.notes.takeIf(String::isNotBlank)?.let { "DESCRIPTION:${escape(it)}" },
             "DUE" to task.dueEpochMillis?.let { "DUE:${utc(it)}" },
+            "PRIORITY" to task.priority.takeIf { it in 1..9 }?.let { "PRIORITY:$it" },
             "STATUS" to if (task.completedAt == null) "STATUS:NEEDS-ACTION" else "STATUS:COMPLETED",
             "COMPLETED" to task.completedAt?.let { "COMPLETED:${utc(it)}" }
         )
@@ -358,7 +361,8 @@ object IcalendarCodec {
         if (value.isNotBlank()) append(name).append(':').append(escape(value)).append("\r\n")
     }
     private fun utc(epoch: Long) = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(epoch))
-    private fun day(epoch: Long) = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(epoch))
+    private fun day(epoch: Long) = Instant.ofEpochMilli(epoch).atZone(ZoneId.systemDefault()).toLocalDate()
+        .format(DateTimeFormatter.BASIC_ISO_DATE)
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
     private fun unescape(value: String) = value.replace("\\n", "\n", true).replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
 }

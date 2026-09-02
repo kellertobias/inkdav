@@ -92,14 +92,21 @@ class OfflineRepository(private val dao: InkDavDao) {
         dao.updateFile(file.copy(offlinePolicy = next, status = if (next == OfflinePolicy.PINNED) SyncStatus.PENDING else SyncStatus.CLEAN))
     }
 
-    suspend fun createEvent(collectionId: String, title: String, startMillis: Long, endMillis: Long, allDay: Boolean) {
+    suspend fun createEvent(
+        collectionId: String,
+        title: String,
+        startMillis: Long,
+        endMillis: Long,
+        allDay: Boolean,
+        recurrenceRule: String?
+    ) {
         val collection = requireNotNull(dao.collection(collectionId))
         val uid = "${UUID.randomUUID()}@inkdav"
         val href = collection.href.trimEnd('/') + "/$uid.ics"
         val event = CalendarEventEntity(
             id = IcalendarCodec.stableId(collectionId, uid), collectionId = collectionId,
             remoteHref = href, uid = uid, title = title.trim(), startEpochMillis = startMillis,
-            endEpochMillis = endMillis, allDay = allDay, status = SyncStatus.PENDING
+            endEpochMillis = endMillis, allDay = allDay, recurrenceRule = recurrenceRule, status = SyncStatus.PENDING
         )
         dao.createEventOffline(
             event,
@@ -119,14 +126,14 @@ class OfflineRepository(private val dao: InkDavDao) {
                 href,
                 IcalendarCodec.encode(event),
                 startMillis - 1,
-                endMillis + 1,
+                endMillis + if (recurrenceRule == null) 1 else 3660L * 86_400_000,
                 ZoneId.systemDefault(),
                 SyncStatus.PENDING
             )
         )
     }
 
-    suspend fun createTask(collectionId: String, title: String, dueMillis: Long?) {
+    suspend fun createTask(collectionId: String, title: String, dueMillis: Long?, priority: Int = 0, notes: String = "") {
         val collection = requireNotNull(dao.collection(collectionId))
         val uid = "${UUID.randomUUID()}@inkdav"
         val href = collection.href.trimEnd('/') + "/$uid.ics"
@@ -136,7 +143,9 @@ class OfflineRepository(private val dao: InkDavDao) {
             remoteHref = href,
             uid = uid,
             title = title.trim(),
+            notes = notes,
             dueEpochMillis = dueMillis,
+            priority = priority,
             status = SyncStatus.PENDING
         )
         dao.createTaskOffline(
@@ -207,7 +216,8 @@ class OfflineRepository(private val dao: InkDavDao) {
         location: String,
         start: Long,
         end: Long,
-        allDay: Boolean
+        allDay: Boolean,
+        recurrenceRule: String?
     ) {
         val collection = requireNotNull(dao.collection(event.collectionId))
         val changed = event.copy(
@@ -217,6 +227,7 @@ class OfflineRepository(private val dao: InkDavDao) {
             startEpochMillis = start,
             endEpochMillis = end,
             allDay = allDay,
+            recurrenceRule = recurrenceRule,
             status = SyncStatus.PENDING,
             localUpdatedAt = System.currentTimeMillis()
         )
@@ -382,12 +393,13 @@ class OfflineRepository(private val dao: InkDavDao) {
         }
     }
 
-    suspend fun updateTask(task: DavTaskEntity, title: String, notes: String, dueMillis: Long?) {
+    suspend fun updateTask(task: DavTaskEntity, title: String, notes: String, dueMillis: Long?, priority: Int) {
         val collection = requireNotNull(dao.collection(task.collectionId))
         val changed = task.copy(
             title = title.trim(),
             notes = notes,
             dueEpochMillis = dueMillis,
+            priority = priority,
             status = SyncStatus.PENDING,
             localUpdatedAt = System.currentTimeMillis()
         )

@@ -15,6 +15,7 @@ The UI uses opaque paper-colored surfaces, strong outlines, redundant text statu
 - Immediate full synchronization plus hourly connected calendar/task synchronization with exponential retry; periodic work does not crawl file roots or wake the NAS.
 - `If-None-Match`/`If-Match` writes, stopped conflict retries, and explicit “Use server” / “Keep both” resolution.
 - WebDAV file indexing, nested folder navigation, pinned recursive folders, and streaming downloads.
+- A separate local file browser rooted in a user-selected Android folder, with folder navigation, file-type icons, in-app Markdown/image/audio/first-page PDF previews, and external-app opening for every file.
 - Two-way, three-way-baselined synchronization between a DAV folder and a user-selected Android Storage Access Framework folder, with safe first merge, rename propagation, pause/remove management, duplicate-binding prevention, conditional writes, conflict copies, atomic local downloads, and independent 10,000-item local/remote scan bounds.
 - Android `DocumentsProvider` integration so other apps can browse indexed files and open cached or streamed content through the system file picker.
 - Resizable task and calendar home-screen widgets. Task widgets can show one selected list or an upcoming window of 1–30 days while excluding selected lists; calendar widgets show the next occurrences. Row counts adapt to launcher-selected widget height.
