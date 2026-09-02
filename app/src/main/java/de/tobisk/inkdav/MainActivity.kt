@@ -12,4 +12,3 @@ class MainActivity : ComponentActivity() {
         setContent { InkDavApp(viewModel()) }
     }
 }
-

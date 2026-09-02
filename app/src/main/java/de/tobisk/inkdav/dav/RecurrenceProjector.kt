@@ -2,16 +2,16 @@ package de.tobisk.inkdav.dav
 
 import de.tobisk.inkdav.data.CalendarOccurrenceEntity
 import de.tobisk.inkdav.data.SyncStatus
+import java.io.StringReader
+import java.time.*
+import java.time.temporal.Temporal
+import java.util.UUID
 import net.fortuna.ical4j.data.CalendarBuilder
 import net.fortuna.ical4j.model.Period
 import net.fortuna.ical4j.model.Property
 import net.fortuna.ical4j.model.component.VEvent
 import net.fortuna.ical4j.model.property.RecurrenceId
 import net.fortuna.ical4j.model.property.Uid
-import java.io.StringReader
-import java.time.*
-import java.time.temporal.Temporal
-import java.util.UUID
 
 /** Builds a bounded, deterministic display projection while retaining the original VCALENDAR. */
 object RecurrenceProjector {
@@ -24,7 +24,7 @@ object RecurrenceProjector {
         windowStartMillis: Long,
         windowEndMillis: Long,
         displayZone: ZoneId,
-        syncStatus: SyncStatus = SyncStatus.CLEAN,
+        syncStatus: SyncStatus = SyncStatus.CLEAN
     ): List<CalendarOccurrenceEntity> {
         val calendar = CalendarBuilder().build(StringReader(raw))
         val components = calendar.getComponents<VEvent>()
@@ -38,7 +38,8 @@ object RecurrenceProjector {
                 if (result.size >= MAX_OCCURRENCES) error("Recurrence expansion exceeds $MAX_OCCURRENCES instances")
                 val original = occurrencePeriod.first
                 if (occurrencePeriod.second > windowStartMillis && occurrencePeriod.first < windowEndMillis) {
-                    result[key(event, original)] = occurrence(event, collectionId, href, original, occurrencePeriod.first, occurrencePeriod.second, displayZone, false, syncStatus)
+                    result[key(event, original)] =
+                        occurrence(event, collectionId, href, original, occurrencePeriod.first, occurrencePeriod.second, displayZone, false, syncStatus)
                 }
             }
         }
@@ -47,10 +48,14 @@ object RecurrenceProjector {
             val recurrenceTemporal = event.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).orElseThrow().date
             val original = epoch(recurrenceTemporal, displayZone)
             val key = key(event, original)
-            if (cancelled(event)) result.remove(key)
-            else singlePeriod(event, displayZone)?.let { period ->
-                if (period.second > windowStartMillis && period.first < windowEndMillis) {
-                    result[key] = occurrence(event, collectionId, href, original, period.first, period.second, displayZone, true, syncStatus)
+            if (cancelled(event)) {
+                result.remove(key)
+            } else {
+                singlePeriod(event, displayZone)?.let { period ->
+                    if (period.second > windowStartMillis && period.first < windowEndMillis) {
+                        result[key] =
+                            occurrence(event, collectionId, href, original, period.first, period.second, displayZone, true, syncStatus)
+                    }
                 }
             }
         }
@@ -60,16 +65,28 @@ object RecurrenceProjector {
     private fun consumedPeriods(event: VEvent, start: Long, end: Long, zone: ZoneId): List<Pair<Long, Long>> {
         val temporal = event.getStartDate<Temporal>().orElseThrow().date
         val periods = when (temporal) {
-            is LocalDate -> event.getConsumedTime(Period(
-                Instant.ofEpochMilli(start).atZone(zone).toLocalDate(),
-                Instant.ofEpochMilli(end).atZone(zone).toLocalDate().plusDays(1),
-            ), true)
-            is LocalDateTime -> event.getConsumedTime(Period(
-                Instant.ofEpochMilli(start).atZone(zone).toLocalDateTime(),
-                Instant.ofEpochMilli(end).atZone(zone).toLocalDateTime(),
-            ), true)
-            is ZonedDateTime -> event.getConsumedTime(Period(Instant.ofEpochMilli(start).atZone(temporal.zone), Instant.ofEpochMilli(end).atZone(temporal.zone)), true)
-            is OffsetDateTime -> event.getConsumedTime(Period(Instant.ofEpochMilli(start).atOffset(temporal.offset), Instant.ofEpochMilli(end).atOffset(temporal.offset)), true)
+            is LocalDate -> event.getConsumedTime(
+                Period(
+                    Instant.ofEpochMilli(start).atZone(zone).toLocalDate(),
+                    Instant.ofEpochMilli(end).atZone(zone).toLocalDate().plusDays(1)
+                ),
+                true
+            )
+            is LocalDateTime -> event.getConsumedTime(
+                Period(
+                    Instant.ofEpochMilli(start).atZone(zone).toLocalDateTime(),
+                    Instant.ofEpochMilli(end).atZone(zone).toLocalDateTime()
+                ),
+                true
+            )
+            is ZonedDateTime -> event.getConsumedTime(
+                Period(Instant.ofEpochMilli(start).atZone(temporal.zone), Instant.ofEpochMilli(end).atZone(temporal.zone)),
+                true
+            )
+            is OffsetDateTime -> event.getConsumedTime(
+                Period(Instant.ofEpochMilli(start).atOffset(temporal.offset), Instant.ofEpochMilli(end).atOffset(temporal.offset)),
+                true
+            )
             is Instant -> event.getConsumedTime(Period(Instant.ofEpochMilli(start), Instant.ofEpochMilli(end)), true)
             else -> error("Unsupported DTSTART temporal ${temporal::class.java.simpleName}")
         }
@@ -92,16 +109,22 @@ object RecurrenceProjector {
         end: Long,
         zone: ZoneId,
         exception: Boolean,
-        status: SyncStatus,
+        status: SyncStatus
     ): CalendarOccurrenceEntity {
         val uid = event.getProperty<Uid>(Property.UID).orElseThrow().value
-        val sourceId = IcalendarCodec.stableId(collectionId, uid, event.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).map { it.value }.orElse(null))
+        val sourceId = IcalendarCodec.stableId(
+            collectionId,
+            uid,
+            event.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).map {
+                it.value
+            }.orElse(null)
+        )
         return CalendarOccurrenceEntity(
             id = UUID.nameUUIDFromBytes("$collectionId|$uid|$original".encodeToByteArray()).toString(),
             sourceEventId = sourceId, collectionId = collectionId, remoteHref = href, uid = uid,
             title = event.summary?.value.orEmpty(), description = event.description?.value.orEmpty(), location = event.location?.value.orEmpty(),
             startEpochMillis = start, endEpochMillis = end, originalStartEpochMillis = original,
-            allDay = event.getStartDate<Temporal>().orElseThrow().date is LocalDate, isException = exception, status = status,
+            allDay = event.getStartDate<Temporal>().orElseThrow().date is LocalDate, isException = exception, status = status
         )
     }
 

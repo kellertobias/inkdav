@@ -1,23 +1,27 @@
 package de.tobisk.inkdav
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.SyncWorker
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
+import de.tobisk.inkdav.widgets.WidgetUpdater
 import java.time.*
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
-import de.tobisk.inkdav.widgets.WidgetUpdater
-import android.content.Intent
-import android.net.Uri
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 
 enum class Destination(val label: String, val mark: String) {
-    CALENDAR("Calendar", "□"), TASKS("Tasks", "✓"), FILES("Files", "▤"), SYNC("Sync", "↻"), SETTINGS("Settings", "⚙")
+    CALENDAR("Calendar", "□"),
+    TASKS("Tasks", "✓"),
+    FILES("Files", "▤"),
+    SYNC("Sync", "↻"),
+    SETTINGS("Settings", "⚙")
 }
 enum class CalendarMode { YEAR, MONTH, WEEK, DAY }
 enum class TaskMode { LISTS, SCHEDULE }
@@ -58,9 +62,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val id = UUID.randomUUID().toString()
             val normalized = baseUrl.trim().let { if (it.endsWith('/')) it else "$it/" }
-            dao.upsertAccount(DavAccountEntity(id, name.trim(), normalized, username.trim(), if (nasDrive) AccountKind.NASDRIVE else AccountKind.DAV))
+            dao.upsertAccount(
+                DavAccountEntity(id, name.trim(), normalized, username.trim(), if (nasDrive) AccountKind.NASDRIVE else AccountKind.DAV)
+            )
             container.credentials.put(id, password)
-            WidgetUpdater.updateAll(getApplication()); sync()
+            WidgetUpdater.updateAll(getApplication())
+            sync()
         }
     }
 
@@ -70,7 +77,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val start = date.atTime(if (allDay) LocalTime.MIDNIGHT else LocalTime.of(hour, 0)).atZone(zone).toInstant().toEpochMilli()
             val end = start + if (allDay) 86_400_000 else 3_600_000
             container.offlineRepository.createEvent(collectionId, title, start, end, allDay)
-            WidgetUpdater.updateAll(getApplication()); sync()
+            WidgetUpdater.updateAll(getApplication())
+            sync()
         }
     }
 
@@ -78,37 +86,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val dueMillis = due?.atTime(9, 0)?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
             container.offlineRepository.createTask(collectionId, title, dueMillis)
-            WidgetUpdater.updateAll(getApplication()); sync()
+            WidgetUpdater.updateAll(getApplication())
+            sync()
         }
     }
 
     fun toggleTask(task: DavTaskEntity) {
-        viewModelScope.launch { container.offlineRepository.toggleTask(task); WidgetUpdater.updateAll(getApplication()); sync() }
+        viewModelScope.launch {
+            container.offlineRepository.toggleTask(task)
+            WidgetUpdater.updateAll(getApplication())
+            sync()
+        }
     }
 
-    fun openOccurrence(occurrence: CalendarOccurrenceEntity) = viewModelScope.launch { editingEvent.value = dao.event(occurrence.sourceEventId) }
-    fun openTask(task: DavTaskEntity) { editingTask.value = task }
-    fun updateEvent(event: CalendarEventEntity, title: String, description: String, location: String, start: Long, end: Long, allDay: Boolean) = viewModelScope.launch {
-        container.offlineRepository.updateEvent(event, title, description, location, start, end, allDay); editingEvent.value = null; WidgetUpdater.updateAll(getApplication()); sync()
+    fun openOccurrence(occurrence: CalendarOccurrenceEntity) = viewModelScope.launch {
+        editingEvent.value =
+            dao.event(occurrence.sourceEventId)
     }
-    fun deleteEvent(event: CalendarEventEntity) = viewModelScope.launch { container.offlineRepository.deleteEvent(event); editingEvent.value = null; WidgetUpdater.updateAll(getApplication()); sync() }
+    fun openTask(task: DavTaskEntity) {
+        editingTask.value = task
+    }
+    fun updateEvent(
+        event: CalendarEventEntity,
+        title: String,
+        description: String,
+        location: String,
+        start: Long,
+        end: Long,
+        allDay: Boolean
+    ) = viewModelScope.launch {
+        container.offlineRepository.updateEvent(event, title, description, location, start, end, allDay)
+        editingEvent.value = null
+        WidgetUpdater.updateAll(getApplication())
+        sync()
+    }
+    fun deleteEvent(event: CalendarEventEntity) = viewModelScope.launch {
+        container.offlineRepository.deleteEvent(event)
+        editingEvent.value =
+            null
+        WidgetUpdater.updateAll(getApplication())
+        sync()
+    }
     fun updateTask(task: DavTaskEntity, title: String, notes: String, dueMillis: Long?) = viewModelScope.launch {
-        container.offlineRepository.updateTask(task, title, notes, dueMillis); editingTask.value = null; WidgetUpdater.updateAll(getApplication()); sync()
+        container.offlineRepository.updateTask(task, title, notes, dueMillis)
+        editingTask.value = null
+        WidgetUpdater.updateAll(getApplication())
+        sync()
     }
-    fun deleteTask(task: DavTaskEntity) = viewModelScope.launch { container.offlineRepository.deleteTask(task); editingTask.value = null; WidgetUpdater.updateAll(getApplication()); sync() }
+    fun deleteTask(task: DavTaskEntity) = viewModelScope.launch {
+        container.offlineRepository.deleteTask(task)
+        editingTask.value = null
+        WidgetUpdater.updateAll(getApplication())
+        sync()
+    }
 
     fun selectFileCollection(id: String, rootHref: String) {
         selectedFileCollection.value = id
         selectedFileParent.value = rootHref
     }
 
-    fun openFolder(href: String) { selectedFileParent.value = href }
-    fun toggleOffline(file: FileNodeEntity) = viewModelScope.launch { container.offlineRepository.toggleOffline(file); sync() }
+    fun openFolder(href: String) {
+        selectedFileParent.value = href
+    }
+    fun toggleOffline(file: FileNodeEntity) = viewModelScope.launch {
+        container.offlineRepository.toggleOffline(file)
+        sync()
+    }
     fun addMirror(uri: Uri) = viewModelScope.launch {
         val collectionId = selectedFileCollection.value ?: return@launch
         val href = selectedFileParent.value ?: return@launch
-        getApplication<Application>().contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        dao.upsertMirror(MirrorBindingEntity(UUID.randomUUID().toString(), collectionId, href, uri.toString(), uri.lastPathSegment ?: "Local mirror"))
+        getApplication<Application>().contentResolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        dao.upsertMirror(
+            MirrorBindingEntity(
+                UUID.randomUUID().toString(),
+                collectionId,
+                href,
+                uri.toString(),
+                uri.lastPathSegment ?: "Local mirror"
+            )
+        )
         sync()
     }
     fun setCalendarWindow(pastDays: Int, futureMonths: Int) = viewModelScope.launch { container.preferences.setCalendarWindow(pastDays, futureMonths) }

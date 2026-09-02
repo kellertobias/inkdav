@@ -1,10 +1,10 @@
 package de.tobisk.inkdav.dav
 
 import de.tobisk.inkdav.data.CalendarEventEntity
+import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.Instant
 
 class IcalendarCodecTest {
     @Test fun parsesFoldedTimedEventAndPreservesRawPayload() {
@@ -33,9 +33,13 @@ END:VCALENDAR"""
 
     @Test fun encodesAllDayEventWithExclusiveEndDate() {
         val event = CalendarEventEntity(
-            id = "id", collectionId = "calendar", uid = "uid", title = "Away, all day",
+            id = "id",
+            collectionId = "calendar",
+            uid = "uid",
+            title = "Away, all day",
             startEpochMillis = Instant.parse("2026-09-02T00:00:00Z").toEpochMilli(),
-            endEpochMillis = Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(), allDay = true,
+            endEpochMillis = Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(),
+            allDay = true
         )
         val encoded = IcalendarCodec.encode(event)
         assertTrue(encoded.contains("DTSTART;VALUE=DATE:20260902\r\n"))
@@ -93,7 +97,7 @@ END:VCALENDAR"""
         val original = IcalendarCodec.parse("cal", "/berlin.ics", "tag", raw).events.single()
         val movedOneHour = original.copy(
             startEpochMillis = original.startEpochMillis + 3_600_000,
-            endEpochMillis = original.endEpochMillis + 3_600_000,
+            endEpochMillis = original.endEpochMillis + 3_600_000
         )
         val patched = IcalendarCodec.patchEvent(raw, null, movedOneHour)
         assertTrue(patched.contains("DTSTART;TZID=Europe/Berlin:20261020T100000"))

@@ -12,10 +12,10 @@ import de.tobisk.inkdav.InkDavApplication
 import de.tobisk.inkdav.data.CollectionKind
 import de.tobisk.inkdav.data.DavCollectionEntity
 import de.tobisk.inkdav.data.FileNodeEntity
-import kotlinx.coroutines.runBlocking
-import java.io.FileNotFoundException
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.concurrent.Executors
+import kotlinx.coroutines.runBlocking
 
 /** Makes indexed DAV files visible to every Storage Access Framework-aware Android application. */
 class InkDavDocumentsProvider : DocumentsProvider() {
@@ -27,31 +27,40 @@ class InkDavDocumentsProvider : DocumentsProvider() {
 
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val cursor = MatrixCursor(projection ?: ROOT_COLUMNS)
-        val roots = runBlocking { dao.enabledAccounts().flatMap { dao.collections(it.id) }.filter { it.kind == CollectionKind.FILE_ROOT || it.kind == CollectionKind.SHARE } }
-        roots.forEach { root -> cursor.newRow().apply {
-            add(Root.COLUMN_ROOT_ID, root.id)
-            add(Root.COLUMN_DOCUMENT_ID, rootDocumentId(root.id))
-            add(Root.COLUMN_TITLE, root.displayName)
-            add(Root.COLUMN_SUMMARY, "InkDAV · online and offline files")
-            add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_SUPPORTS_SEARCH)
-            add(Root.COLUMN_MIME_TYPES, "*/*")
-            add(Root.COLUMN_ICON, android.R.drawable.ic_menu_agenda)
-        } }
+        val roots = runBlocking {
+            dao.enabledAccounts().flatMap { dao.collections(it.id) }.filter {
+                it.kind == CollectionKind.FILE_ROOT ||
+                    it.kind == CollectionKind.SHARE
+            }
+        }
+        roots.forEach { root ->
+            cursor.newRow().apply {
+                add(Root.COLUMN_ROOT_ID, root.id)
+                add(Root.COLUMN_DOCUMENT_ID, rootDocumentId(root.id))
+                add(Root.COLUMN_TITLE, root.displayName)
+                add(Root.COLUMN_SUMMARY, "InkDAV · online and offline files")
+                add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_SUPPORTS_SEARCH)
+                add(Root.COLUMN_MIME_TYPES, "*/*")
+                add(Root.COLUMN_ICON, android.R.drawable.ic_menu_agenda)
+            }
+        }
         return cursor
     }
 
-    override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor =
-        MatrixCursor(projection ?: DOCUMENT_COLUMNS).also { cursor ->
-            if (documentId.startsWith("root:")) {
-                val collection = runBlocking { dao.collection(documentId.removePrefix("root:")) } ?: throw FileNotFoundException(documentId)
-                includeRoot(cursor, collection)
-            } else includeFile(cursor, requireFile(documentId))
+    override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor = MatrixCursor(projection ?: DOCUMENT_COLUMNS).also { cursor ->
+        if (documentId.startsWith("root:")) {
+            val collection = runBlocking { dao.collection(documentId.removePrefix("root:")) } ?: throw FileNotFoundException(documentId)
+            includeRoot(cursor, collection)
+        } else {
+            includeFile(cursor, requireFile(documentId))
         }
+    }
 
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
         val cursor = MatrixCursor(projection ?: DOCUMENT_COLUMNS)
         val (collectionId, parentHref) = if (parentDocumentId.startsWith("root:")) {
-            val collection = runBlocking { dao.collection(parentDocumentId.removePrefix("root:")) } ?: throw FileNotFoundException(parentDocumentId)
+            val collection =
+                runBlocking { dao.collection(parentDocumentId.removePrefix("root:")) } ?: throw FileNotFoundException(parentDocumentId)
             collection.id to collection.href
         } else {
             val parent = requireFile(parentDocumentId)
@@ -80,16 +89,27 @@ class InkDavDocumentsProvider : DocumentsProvider() {
 
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
         val child = runCatching { requireFile(documentId) }.getOrNull() ?: return false
-        return if (parentDocumentId.startsWith("root:")) child.collectionId == parentDocumentId.removePrefix("root:")
-        else child.parentHref == runCatching { requireFile(parentDocumentId).href }.getOrNull()
+        return if (parentDocumentId.startsWith("root:")) {
+            child.collectionId == parentDocumentId.removePrefix("root:")
+        } else {
+            child.parentHref == runCatching { requireFile(parentDocumentId).href }.getOrNull()
+        }
     }
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
-        if (mode != "r") throw FileNotFoundException("The indexed DAV provider is read-only; edit a mirrored local folder for queued upload")
+        if (mode !=
+            "r"
+        ) {
+            throw FileNotFoundException("The indexed DAV provider is read-only; edit a mirrored local folder for queued upload")
+        }
         val file = requireFile(documentId)
         if (file.isDirectory) throw FileNotFoundException("Cannot open a directory")
         file.localUri?.let { local ->
-            if (Uri.parse(local).scheme == "file") return ParcelFileDescriptor.open(File(requireNotNull(Uri.parse(local).path)), ParcelFileDescriptor.MODE_READ_ONLY)
+            if (Uri.parse(local).scheme ==
+                "file"
+            ) {
+                return ParcelFileDescriptor.open(File(requireNotNull(Uri.parse(local).path)), ParcelFileDescriptor.MODE_READ_ONLY)
+            }
             return requireNotNull(context).contentResolver.openFileDescriptor(Uri.parse(local), "r", signal)
                 ?: throw FileNotFoundException(file.displayName)
         }
@@ -99,8 +119,11 @@ class InkDavDocumentsProvider : DocumentsProvider() {
         val pipe = ParcelFileDescriptor.createPipe()
         executor.execute {
             ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { output ->
-                try { runBlocking { container.davClient.get(account, password, file.href) }.use { it.copyTo(output) } }
-                finally { password.fill('\u0000') }
+                try {
+                    runBlocking { container.davClient.get(account, password, file.href) }.use { it.copyTo(output) }
+                } finally {
+                    password.fill('\u0000')
+                }
             }
         }
         return pipe[0]
@@ -130,7 +153,24 @@ class InkDavDocumentsProvider : DocumentsProvider() {
     private fun rootDocumentId(id: String) = "root:$id"
 
     companion object {
-        private val ROOT_COLUMNS = arrayOf(Root.COLUMN_ROOT_ID, Root.COLUMN_DOCUMENT_ID, Root.COLUMN_TITLE, Root.COLUMN_SUMMARY, Root.COLUMN_FLAGS, Root.COLUMN_MIME_TYPES, Root.COLUMN_ICON)
-        private val DOCUMENT_COLUMNS = arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS)
+        private val ROOT_COLUMNS =
+            arrayOf(
+                Root.COLUMN_ROOT_ID,
+                Root.COLUMN_DOCUMENT_ID,
+                Root.COLUMN_TITLE,
+                Root.COLUMN_SUMMARY,
+                Root.COLUMN_FLAGS,
+                Root.COLUMN_MIME_TYPES,
+                Root.COLUMN_ICON
+            )
+        private val DOCUMENT_COLUMNS =
+            arrayOf(
+                Document.COLUMN_DOCUMENT_ID,
+                Document.COLUMN_DISPLAY_NAME,
+                Document.COLUMN_MIME_TYPE,
+                Document.COLUMN_SIZE,
+                Document.COLUMN_LAST_MODIFIED,
+                Document.COLUMN_FLAGS
+            )
     }
 }

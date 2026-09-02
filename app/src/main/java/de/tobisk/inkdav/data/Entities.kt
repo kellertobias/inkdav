@@ -24,17 +24,20 @@ data class DavAccountEntity(
     val kind: AccountKind = AccountKind.DAV,
     val enabled: Boolean = true,
     val lastSyncAt: Long? = null,
-    val lastSyncError: String? = null,
+    val lastSyncError: String? = null
 )
 
 @Entity(
     tableName = "collections",
-    foreignKeys = [ForeignKey(
-        entity = DavAccountEntity::class,
-        parentColumns = ["id"], childColumns = ["accountId"],
-        onDelete = ForeignKey.CASCADE,
-    )],
-    indices = [Index("accountId"), Index(value = ["accountId", "href", "kind"], unique = true)],
+    foreignKeys = [
+        ForeignKey(
+            entity = DavAccountEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["accountId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("accountId"), Index(value = ["accountId", "href", "kind"], unique = true)]
 )
 data class DavCollectionEntity(
     @PrimaryKey val id: String,
@@ -46,7 +49,7 @@ data class DavCollectionEntity(
     val readOnly: Boolean = false,
     val visible: Boolean = true,
     val syncToken: String? = null,
-    val ctag: String? = null,
+    val ctag: String? = null
 )
 
 @Entity(
@@ -54,8 +57,8 @@ data class DavCollectionEntity(
     indices = [
         Index("collectionId"), Index("startEpochMillis"),
         Index(value = ["collectionId", "remoteHref"]),
-        Index(value = ["collectionId", "uid"]),
-    ],
+        Index(value = ["collectionId", "uid"])
+    ]
 )
 data class CalendarEventEntity(
     @PrimaryKey val id: String,
@@ -75,12 +78,18 @@ data class CalendarEventEntity(
     val rawIcal: String? = null,
     val status: SyncStatus = SyncStatus.CLEAN,
     val locallyDeleted: Boolean = false,
-    val localUpdatedAt: Long = System.currentTimeMillis(),
+    val localUpdatedAt: Long = System.currentTimeMillis()
 )
 
 @Entity(
     tableName = "calendar_occurrences",
-    indices = [Index("collectionId"), Index("sourceEventId"), Index("startEpochMillis"), Index(value = ["collectionId", "uid", "originalStartEpochMillis"], unique = true)],
+    indices = [
+        Index(
+            "collectionId"
+        ), Index(
+            "sourceEventId"
+        ), Index("startEpochMillis"), Index(value = ["collectionId", "uid", "originalStartEpochMillis"], unique = true)
+    ]
 )
 data class CalendarOccurrenceEntity(
     @PrimaryKey val id: String,
@@ -96,12 +105,12 @@ data class CalendarOccurrenceEntity(
     val originalStartEpochMillis: Long,
     val allDay: Boolean,
     val isException: Boolean = false,
-    val status: SyncStatus = SyncStatus.CLEAN,
+    val status: SyncStatus = SyncStatus.CLEAN
 )
 
 @Entity(
     tableName = "tasks",
-    indices = [Index("collectionId"), Index("dueEpochMillis"), Index(value = ["collectionId", "remoteHref"], unique = true)],
+    indices = [Index("collectionId"), Index("dueEpochMillis"), Index(value = ["collectionId", "remoteHref"], unique = true)]
 )
 data class DavTaskEntity(
     @PrimaryKey val id: String,
@@ -119,12 +128,12 @@ data class DavTaskEntity(
     val rawIcal: String? = null,
     val status: SyncStatus = SyncStatus.CLEAN,
     val locallyDeleted: Boolean = false,
-    val localUpdatedAt: Long = System.currentTimeMillis(),
+    val localUpdatedAt: Long = System.currentTimeMillis()
 )
 
 @Entity(
     tableName = "file_nodes",
-    indices = [Index("collectionId"), Index("parentHref"), Index(value = ["collectionId", "href"], unique = true)],
+    indices = [Index("collectionId"), Index("parentHref"), Index(value = ["collectionId", "href"], unique = true)]
 )
 data class FileNodeEntity(
     @PrimaryKey val id: String,
@@ -141,7 +150,7 @@ data class FileNodeEntity(
     val localUri: String? = null,
     val localContentHash: String? = null,
     val lastSyncedEtag: String? = null,
-    val status: SyncStatus = SyncStatus.CLEAN,
+    val status: SyncStatus = SyncStatus.CLEAN
 )
 
 @Entity(tableName = "mirror_bindings", indices = [Index("collectionId"), Index(value = ["collectionId", "remoteRootHref"], unique = true)])
@@ -155,7 +164,7 @@ data class MirrorBindingEntity(
     val state: MirrorState = MirrorState.UNINITIALIZED,
     val lastCompleteSyncAt: Long? = null,
     val lastError: String? = null,
-    val itemLimit: Int = 10_000,
+    val itemLimit: Int = 10_000
 )
 
 @Entity(tableName = "mirror_entries", indices = [Index("bindingId"), Index(value = ["bindingId", "relativePath"], unique = true)])
@@ -172,7 +181,7 @@ data class MirrorEntryEntity(
     val currentRemoteEtag: String? = null,
     val currentLocalHash: String? = null,
     val status: MirrorEntryStatus = MirrorEntryStatus.CLEAN,
-    val conflictReason: String? = null,
+    val conflictReason: String? = null
 )
 
 @Entity(tableName = "task_widget_configs")
@@ -180,7 +189,7 @@ data class TaskWidgetConfigEntity(
     @PrimaryKey val appWidgetId: Int,
     val mode: TaskWidgetMode = TaskWidgetMode.UPCOMING,
     val listCollectionId: String? = null,
-    val lookAheadDays: Int = 7,
+    val lookAheadDays: Int = 7
 )
 
 @Entity(tableName = "task_widget_exclusions", primaryKeys = ["appWidgetId", "collectionId"], indices = [Index("appWidgetId")])
@@ -198,5 +207,5 @@ data class PendingMutationEntity(
     val payload: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val attemptCount: Int = 0,
-    val lastError: String? = null,
+    val lastError: String? = null
 )

@@ -38,10 +38,14 @@ interface InkDavDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCollections(collections: List<DavCollectionEntity>)
 
-    @Query("SELECT * FROM events WHERE locallyDeleted = 0 AND endEpochMillis >= :start AND startEpochMillis < :end ORDER BY startEpochMillis")
+    @Query(
+        "SELECT * FROM events WHERE locallyDeleted = 0 AND endEpochMillis >= :start AND startEpochMillis < :end ORDER BY startEpochMillis"
+    )
     fun observeEvents(start: Long, end: Long): Flow<List<CalendarEventEntity>>
 
-    @Query("SELECT * FROM events WHERE locallyDeleted = 0 AND endEpochMillis >= :start AND startEpochMillis < :end ORDER BY startEpochMillis")
+    @Query(
+        "SELECT * FROM events WHERE locallyDeleted = 0 AND endEpochMillis >= :start AND startEpochMillis < :end ORDER BY startEpochMillis"
+    )
     suspend fun events(start: Long, end: Long): List<CalendarEventEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -92,7 +96,9 @@ interface InkDavDao {
     @Delete
     suspend fun deleteTask(task: DavTaskEntity)
 
-    @Query("SELECT * FROM file_nodes WHERE collectionId = :collectionId AND ((:parentHref IS NULL AND parentHref IS NULL) OR parentHref = :parentHref) ORDER BY isDirectory DESC, displayName COLLATE NOCASE")
+    @Query(
+        "SELECT * FROM file_nodes WHERE collectionId = :collectionId AND ((:parentHref IS NULL AND parentHref IS NULL) OR parentHref = :parentHref) ORDER BY isDirectory DESC, displayName COLLATE NOCASE"
+    )
     fun observeFiles(collectionId: String, parentHref: String?): Flow<List<FileNodeEntity>>
 
     @Query("SELECT * FROM file_nodes WHERE id = :id")
@@ -101,7 +107,9 @@ interface InkDavDao {
     @Query("SELECT * FROM file_nodes WHERE collectionId = :collectionId AND href = :href")
     suspend fun fileByHref(collectionId: String, href: String): FileNodeEntity?
 
-    @Query("SELECT * FROM file_nodes WHERE collectionId = :collectionId AND parentHref = :parentHref ORDER BY isDirectory DESC, displayName COLLATE NOCASE")
+    @Query(
+        "SELECT * FROM file_nodes WHERE collectionId = :collectionId AND parentHref = :parentHref ORDER BY isDirectory DESC, displayName COLLATE NOCASE"
+    )
     suspend fun files(collectionId: String, parentHref: String): List<FileNodeEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -164,10 +172,14 @@ interface InkDavDao {
     @Query("DELETE FROM task_widget_configs WHERE appWidgetId = :id")
     suspend fun deleteTaskWidgetConfig(id: Int)
 
-    @Query("SELECT * FROM tasks WHERE locallyDeleted = 0 AND completedAt IS NULL AND collectionId = :collectionId ORDER BY dueEpochMillis IS NULL, dueEpochMillis, title LIMIT :limit")
+    @Query(
+        "SELECT * FROM tasks WHERE locallyDeleted = 0 AND completedAt IS NULL AND collectionId = :collectionId ORDER BY dueEpochMillis IS NULL, dueEpochMillis, title LIMIT :limit"
+    )
     suspend fun widgetListTasks(collectionId: String, limit: Int): List<DavTaskEntity>
 
-    @Query("SELECT * FROM tasks WHERE locallyDeleted = 0 AND completedAt IS NULL AND dueEpochMillis IS NOT NULL AND dueEpochMillis < :endExclusive AND collectionId NOT IN (:excluded) ORDER BY dueEpochMillis, title LIMIT :limit")
+    @Query(
+        "SELECT * FROM tasks WHERE locallyDeleted = 0 AND completedAt IS NULL AND dueEpochMillis IS NOT NULL AND dueEpochMillis < :endExclusive AND collectionId NOT IN (:excluded) ORDER BY dueEpochMillis, title LIMIT :limit"
+    )
     suspend fun widgetUpcomingTasks(endExclusive: Long, excluded: List<String>, limit: Int): List<DavTaskEntity>
 
     @Transaction

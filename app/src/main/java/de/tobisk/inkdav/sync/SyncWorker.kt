@@ -10,14 +10,16 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import de.tobisk.inkdav.InkDavApplication
-import java.time.Duration
 import de.tobisk.inkdav.widgets.WidgetUpdater
+import java.time.Duration
 
 class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result = if ((applicationContext as InkDavApplication).container.syncEngine.synchronizeAll()) {
         WidgetUpdater.updateAll(applicationContext)
         Result.success()
-    } else Result.retry()
+    } else {
+        Result.retry()
+    }
 
     companion object {
         private const val NAME = "inkdav-sync"

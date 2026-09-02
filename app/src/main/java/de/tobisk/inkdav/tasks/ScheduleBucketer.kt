@@ -34,7 +34,8 @@ object ScheduleBucketer {
         val order = listOf("overdue", "today", "tomorrow") +
             (2L..6L).map { "day:${today.plusDays(it)}" } +
             listOf("next-week", "two-weeks", "three-weeks", "next-month", "later", "none")
-        return order.mapNotNull { key -> buckets[key]?.let { TaskBucket(key, it.first, it.second.sortedBy(DavTaskEntity::dueEpochMillis)) } }
+        return order.mapNotNull { key ->
+            buckets[key]?.let { TaskBucket(key, it.first, it.second.sortedBy(DavTaskEntity::dueEpochMillis)) }
+        }
     }
 }
-

@@ -27,6 +27,15 @@ Requirements: JDK 17 and Android SDK platform 36.
 JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk ./gradlew testDebugUnitTest assembleDebug lintDebug
 ```
 
+Canonical development checks:
+
+```sh
+./gradlew ktlintFormat
+./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug
+```
+
+GitHub Actions runs the same verification for every pull request and push to `main`, then retains the debug APK as a workflow artifact.
+
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 To install on a USB- or network-ADB-connected BOOX tablet:
@@ -59,3 +68,7 @@ This is a compiled, test-backed first vertical slice, not yet the final producti
 4. Integration fixtures for Nextcloud and the deployed NASDrive endpoint, followed by a release APK test on the physical Note Air 5 C in BOOX HD, Regal, and Speed modes.
 
 Android scoped storage does not allow a Dropbox-style raw filesystem mount visible to every legacy app. InkDAV's transparent interface is the system file picker (`DocumentsProvider`); a selected physical mirror folder is the compatibility path for apps that only browse shared storage.
+
+## License
+
+InkDAV is available under the Apache License 2.0. See `LICENSE`.

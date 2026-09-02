@@ -2,6 +2,13 @@ package de.tobisk.inkdav.dav
 
 import android.util.Xml
 import de.tobisk.inkdav.data.DavAccountEntity
+import java.io.FilterInputStream
+import java.io.InputStream
+import java.net.URI
+import java.time.Instant
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Credentials
@@ -13,20 +20,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 import okio.source
 import org.xmlpull.v1.XmlPullParser
-import java.io.FilterInputStream
-import java.io.InputStream
-import java.net.URI
-import java.time.Instant
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
-import java.util.concurrent.TimeUnit
 
 class OkHttpDavClient(
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followRedirects(false)
-        .build(),
+        .build()
 ) : DavClient {
     override suspend fun discoverCollections(account: DavAccountEntity, password: CharArray): List<DavResource> {
         val principal = propfind(account, password, account.baseUrl, 0, DISCOVERY_PROPERTIES).firstOrNull()
@@ -43,25 +43,27 @@ class OkHttpDavClient(
         collectionHref: String,
         component: String,
         from: Instant,
-        until: Instant,
+        until: Instant
     ): List<DavResource> {
         val format = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(java.time.ZoneOffset.UTC)
         val componentFilter = if (component == "VTODO") {
             "<c:comp-filter name=\"VTODO\"/>"
         } else {
-            "<c:comp-filter name=\"VEVENT\"><c:time-range start=\"${format.format(from)}\" end=\"${format.format(until)}\"/></c:comp-filter>"
+            "<c:comp-filter name=\"VEVENT\"><c:time-range start=\"${format.format(
+                from
+            )}\" end=\"${format.format(until)}\"/></c:comp-filter>"
         }
         val body = """<?xml version="1.0" encoding="utf-8" ?>
             <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
               <d:prop><d:getetag/><c:calendar-data/></d:prop>
               <c:filter><c:comp-filter name="VCALENDAR">$componentFilter</c:comp-filter></c:filter>
-            </c:calendar-query>""".trimIndent()
+            </c:calendar-query>
+        """.trimIndent()
         return xmlRequest(account, password, resolve(account.baseUrl, collectionHref), "REPORT", body, mapOf("Depth" to "1"))
     }
 
-    override suspend fun list(account: DavAccountEntity, password: CharArray, href: String): List<DavResource> =
-        propfind(account, password, resolve(account.baseUrl, href), 1, FILE_PROPERTIES)
-            .filter { it.href.trimEnd('/') != URI(resolve(account.baseUrl, href)).path.trimEnd('/') }
+    override suspend fun list(account: DavAccountEntity, password: CharArray, href: String): List<DavResource> = propfind(account, password, resolve(account.baseUrl, href), 1, FILE_PROPERTIES)
+        .filter { it.href.trimEnd('/') != URI(resolve(account.baseUrl, href)).path.trimEnd('/') }
 
     override suspend fun get(account: DavAccountEntity, password: CharArray, href: String): InputStream = withContext(Dispatchers.IO) {
         val response = execute(account, password, Request.Builder().url(resolve(account.baseUrl, href)).get())
@@ -71,7 +73,13 @@ class OkHttpDavClient(
             throw DavHttpException(code, "DAV download failed ($code)")
         }
         object : FilterInputStream(response.body.byteStream()) {
-            override fun close() { try { super.close() } finally { response.close() } }
+            override fun close() {
+                try {
+                    super.close()
+                } finally {
+                    response.close()
+                }
+            }
         }
     }
 
@@ -82,7 +90,7 @@ class OkHttpDavClient(
         body: ByteArray,
         contentType: String,
         etag: String?,
-        createOnly: Boolean,
+        createOnly: Boolean
     ): String? = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(resolve(account.baseUrl, href))
             .put(body.toRequestBody(contentType.toMediaType()))
@@ -101,12 +109,14 @@ class OkHttpDavClient(
         size: Long?,
         contentType: String,
         etag: String?,
-        createOnly: Boolean,
+        createOnly: Boolean
     ): String? = withContext(Dispatchers.IO) {
         val requestBody = object : RequestBody() {
             override fun contentType() = contentType.toMediaType()
             override fun contentLength(): Long = size ?: -1
-            override fun writeTo(sink: BufferedSink) { body().use { input -> sink.writeAll(input.source()) } }
+            override fun writeTo(sink: BufferedSink) {
+                body().use { input -> sink.writeAll(input.source()) }
+            }
         }
         val builder = Request.Builder().url(resolve(account.baseUrl, href)).put(requestBody)
         if (createOnly) builder.header("If-None-Match", "*") else etag?.let { builder.header("If-Match", it) }
@@ -125,14 +135,25 @@ class OkHttpDavClient(
     }
 
     override suspend fun makeCollection(account: DavAccountEntity, password: CharArray, href: String) = withContext(Dispatchers.IO) {
-        execute(account, password, Request.Builder().url(resolve(account.baseUrl, href)).method("MKCOL", ByteArray(0).toRequestBody(null))).use {
+        execute(
+            account,
+            password,
+            Request.Builder().url(resolve(account.baseUrl, href)).method("MKCOL", ByteArray(0).toRequestBody(null))
+        ).use {
             if (!it.isSuccessful && it.code != 405) throw DavHttpException(it.code, "DAV folder creation failed (${it.code})")
         }
     }
 
-    private suspend fun propfind(
-        account: DavAccountEntity, password: CharArray, url: String, depth: Int, properties: String,
-    ) = xmlRequest(account, password, url, "PROPFIND", "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop>$properties</d:prop></d:propfind>", mapOf("Depth" to depth.toString()))
+    private suspend fun propfind(account: DavAccountEntity, password: CharArray, url: String, depth: Int, properties: String) = xmlRequest(
+        account,
+        password,
+        url,
+        "PROPFIND",
+        "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop>$properties</d:prop></d:propfind>",
+        mapOf(
+            "Depth" to depth.toString()
+        )
+    )
 
     private suspend fun xmlRequest(
         account: DavAccountEntity,
@@ -140,7 +161,7 @@ class OkHttpDavClient(
         url: String,
         method: String,
         xml: String,
-        headers: Map<String, String>,
+        headers: Map<String, String>
     ): List<DavResource> = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(url).method(method, xml.toRequestBody("application/xml; charset=utf-8".toMediaType()))
         headers.forEach(builder::header)
@@ -170,10 +191,27 @@ class OkHttpDavClient(
                 XmlPullParser.START_TAG -> {
                     val currentTag = parser.name.lowercase()
                     tagStack.addLast(currentTag)
-                    if (currentTag == "response") { response = mutableMapOf(); isCollection = false; isCalendar = false; events = false; tasks = false }
+                    if (currentTag ==
+                        "response"
+                    ) {
+                        response = mutableMapOf()
+                        isCollection = false
+                        isCalendar = false
+                        events = false
+                        tasks = false
+                    }
                     if (response != null && currentTag == "collection") isCollection = true
                     if (response != null && currentTag == "calendar") isCalendar = true
-                    if (response != null && currentTag == "comp") when (parser.getAttributeValue(null, "name")?.uppercase()) { "VEVENT" -> events = true; "VTODO" -> tasks = true }
+                    if (response != null &&
+                        currentTag == "comp"
+                    ) {
+                        when (parser.getAttributeValue(null, "name")?.uppercase()) {
+                            "VEVENT" -> events = true
+                            "VTODO" ->
+                                tasks =
+                                    true
+                        }
+                    }
                 }
                 XmlPullParser.TEXT -> if (response != null && parser.text.isNotBlank() && tagStack.isNotEmpty()) {
                     val currentTag = tagStack.last()
@@ -188,14 +226,16 @@ class OkHttpDavClient(
                 XmlPullParser.END_TAG -> {
                     if (parser.name.equals("response", true) && response != null) {
                         val r = response
-                        r["href"]?.let { href -> result += DavResource(
-                        href = href, displayName = r["displayname"].orEmpty(), isCollection = isCollection,
-                        isCalendar = isCalendar, supportsEvents = events, supportsTasks = tasks,
-                        etag = r["getetag"], contentType = r["getcontenttype"], size = r["getcontentlength"]?.toLongOrNull(),
-                        modifiedAt = r["getlastmodified"]?.let(::httpDate), calendarData = r["calendar-data"],
-                        syncToken = r["sync-token"], ctag = r["getctag"], currentUserPrincipalHref = r["current-user-principal"],
-                        calendarHomeHref = r["calendar-home-set"],
-                        ) }
+                        r["href"]?.let { href ->
+                            result += DavResource(
+                                href = href, displayName = r["displayname"].orEmpty(), isCollection = isCollection,
+                                isCalendar = isCalendar, supportsEvents = events, supportsTasks = tasks,
+                                etag = r["getetag"], contentType = r["getcontenttype"], size = r["getcontentlength"]?.toLongOrNull(),
+                                modifiedAt = r["getlastmodified"]?.let(::httpDate), calendarData = r["calendar-data"],
+                                syncToken = r["sync-token"], ctag = r["getctag"], currentUserPrincipalHref = r["current-user-principal"],
+                                calendarHomeHref = r["calendar-home-set"]
+                            )
+                        }
                         response = null
                     }
                     if (tagStack.isNotEmpty()) tagStack.removeLast()
@@ -206,7 +246,9 @@ class OkHttpDavClient(
         return result
     }
 
-    private fun httpDate(value: String) = runCatching { ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() }.getOrNull()
+    private fun httpDate(value: String) = runCatching {
+        ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
+    }.getOrNull()
     private fun resolve(base: String, href: String): String = URI(base).resolve(href).toString()
 
     companion object {

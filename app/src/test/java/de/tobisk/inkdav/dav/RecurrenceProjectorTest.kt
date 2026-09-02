@@ -1,11 +1,11 @@
 package de.tobisk.inkdav.dav
 
+import java.time.Instant
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.Instant
-import java.time.ZoneId
 
 class RecurrenceProjectorTest {
     @Test fun expandsExdateRdateMovedAndCancelledExceptionsIdempotently() {
@@ -61,9 +61,15 @@ SUMMARY:DST
 END:VEVENT
 END:VCALENDAR"""
         val zone = ZoneId.of("Europe/Berlin")
-        val occurrences = RecurrenceProjector.project("cal", "/dst.ics", raw, Instant.parse("2026-10-17T00:00:00Z").toEpochMilli(), Instant.parse("2026-11-10T00:00:00Z").toEpochMilli(), zone)
+        val occurrences = RecurrenceProjector.project(
+            "cal",
+            "/dst.ics",
+            raw,
+            Instant.parse("2026-10-17T00:00:00Z").toEpochMilli(),
+            Instant.parse("2026-11-10T00:00:00Z").toEpochMilli(),
+            zone
+        )
         assertEquals(listOf(9, 9, 9), occurrences.map { Instant.ofEpochMilli(it.startEpochMillis).atZone(zone).hour })
         assertFalse(occurrences.map { it.startEpochMillis }.zipWithNext().all { (a, b) -> b - a == 7 * 86_400_000L })
     }
 }
-

@@ -25,8 +25,13 @@ class TaskWidgetConfigActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setResult(Activity.RESULT_CANCELED)
-        widgetId = intent?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID) ?: AppWidgetManager.INVALID_APPWIDGET_ID
-        if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) { finish(); return }
+        widgetId =
+            intent?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+                ?: AppWidgetManager.INVALID_APPWIDGET_ID
+        if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+            finish()
+            return
+        }
         val dao = (application as InkDavApplication).container.database.dao()
         setContent {
             val allCollections by dao.observeCollections().collectAsStateWithLifecycle(emptyList())
@@ -57,9 +62,21 @@ class TaskWidgetConfigActivity : ComponentActivity() {
                         lists.forEach { list -> ConfigRow(list.displayName, selectedList == list.id) { selectedList = list.id } }
                     } else {
                         Text("Upcoming for $days days", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(1, 3, 7, 14, 30).forEach { value -> OutlinedButton({ days = value }) { Text(value.toString()) } } }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(1, 3, 7, 14, 30).forEach { value ->
+                                OutlinedButton({
+                                    days =
+                                        value
+                                }) { Text(value.toString()) }
+                            }
+                        }
                         Text("Exclude lists", style = MaterialTheme.typography.titleMedium)
-                        lists.forEach { list -> ConfigRow(list.displayName, list.id in excluded) { excluded = if (list.id in excluded) excluded - list.id else excluded + list.id } }
+                        lists.forEach { list ->
+                            ConfigRow(list.displayName, list.id in excluded) {
+                                excluded =
+                                    if (list.id in excluded) excluded - list.id else excluded + list.id
+                            }
+                        }
                     }
                     Spacer(Modifier.weight(1f))
                     Button(onClick = {
@@ -67,10 +84,17 @@ class TaskWidgetConfigActivity : ComponentActivity() {
                             dao.upsertTaskWidgetConfig(TaskWidgetConfigEntity(widgetId, mode, selectedList, days))
                             dao.clearTaskWidgetExclusions(widgetId)
                             dao.insertTaskWidgetExclusions(excluded.map { TaskWidgetExcludedListEntity(widgetId, it) })
-                            TaskWidgetProvider.update(this@TaskWidgetConfigActivity, AppWidgetManager.getInstance(this@TaskWidgetConfigActivity), intArrayOf(widgetId))
-                            setResult(Activity.RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)); finish()
+                            TaskWidgetProvider.update(
+                                this@TaskWidgetConfigActivity,
+                                AppWidgetManager.getInstance(this@TaskWidgetConfigActivity),
+                                intArrayOf(widgetId)
+                            )
+                            setResult(Activity.RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId))
+                            finish()
                         }
-                    }, enabled = loaded && (mode == TaskWidgetMode.UPCOMING || selectedList != null), modifier = Modifier.fillMaxWidth()) { Text(if (loaded) "Save widget" else "Loading…") }
+                    }, enabled = loaded && (mode == TaskWidgetMode.UPCOMING || selectedList != null), modifier = Modifier.fillMaxWidth()) {
+                        Text(if (loaded) "Save widget" else "Loading…")
+                    }
                 }
             }
         }
@@ -79,5 +103,9 @@ class TaskWidgetConfigActivity : ComponentActivity() {
 
 @Composable
 private fun ConfigRow(label: String, selected: Boolean, click: () -> Unit) {
-    OutlinedButton(click, Modifier.fillMaxWidth().border(if (selected) 2.dp else 0.dp, Color.Black)) { Text((if (selected) "✓  " else "□  ") + label) }
+    OutlinedButton(click, Modifier.fillMaxWidth().border(if (selected) 2.dp else 0.dp, Color.Black)) {
+        Text(
+            (if (selected) "✓  " else "□  ") + label
+        )
+    }
 }

@@ -3,12 +3,12 @@ package de.tobisk.inkdav.security
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Base64
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import android.util.Base64
 
 /** Credentials are encrypted with a non-exportable device key and excluded from Android backup. */
 class CredentialStore(context: Context) {
@@ -19,7 +19,11 @@ class CredentialStore(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val clear = password.concatToString().encodeToByteArray()
-        val encrypted = try { cipher.doFinal(clear) } finally { clear.fill(0) }
+        val encrypted = try {
+            cipher.doFinal(clear)
+        } finally {
+            clear.fill(0)
+        }
         preferences.edit()
             .putString("$accountId.iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString("$accountId.value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
@@ -33,7 +37,11 @@ class CredentialStore(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
         val clear = cipher.doFinal(Base64.decode(value, Base64.NO_WRAP))
-        return try { clear.decodeToString().toCharArray() } finally { clear.fill(0) }
+        return try {
+            clear.decodeToString().toCharArray()
+        } finally {
+            clear.fill(0)
+        }
     }
 
     fun remove(accountId: String) {
@@ -44,15 +52,16 @@ class CredentialStore(context: Context) {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(alias, null) as? SecretKey)?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
-            init(KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build())
+            init(
+                KeyGenParameterSpec.Builder(
+                    alias,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build()
+            )
             generateKey()
         }
     }
 }
-

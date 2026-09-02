@@ -5,15 +5,15 @@ import de.tobisk.inkdav.dav.DavClient
 import de.tobisk.inkdav.dav.DavHttpException
 import de.tobisk.inkdav.dav.IcalendarCodec
 import de.tobisk.inkdav.dav.RecurrenceProjector
+import de.tobisk.inkdav.files.MirrorSyncEngine
 import de.tobisk.inkdav.security.CredentialStore
 import de.tobisk.inkdav.settings.UserPreferences
-import kotlinx.coroutines.flow.first
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.UUID
-import java.io.File
-import de.tobisk.inkdav.files.MirrorSyncEngine
+import kotlinx.coroutines.flow.first
 
 class SyncEngine(
     private val dao: InkDavDao,
@@ -21,7 +21,7 @@ class SyncEngine(
     private val dav: DavClient,
     private val preferences: UserPreferences,
     private val offlineDirectory: File,
-    private val mirrorSyncEngine: MirrorSyncEngine,
+    private val mirrorSyncEngine: MirrorSyncEngine
 ) {
     suspend fun synchronizeAll(): Boolean = dao.enabledAccounts().map { account ->
         runCatching { synchronize(account) }.isSuccess
@@ -34,9 +34,41 @@ class SyncEngine(
             val discovered = dav.discoverCollections(account, password)
             val collections = discovered.flatMap { remote ->
                 buildList {
-                    if (remote.isCalendar && remote.supportsEvents) add(collection(account, remote.href, remote.displayName, CollectionKind.CALENDAR, remote.syncToken, remote.ctag))
-                    if (remote.isCalendar && remote.supportsTasks) add(collection(account, remote.href, remote.displayName, CollectionKind.TASK_LIST, remote.syncToken, remote.ctag))
-                    if (account.kind == AccountKind.NASDRIVE && remote.isCollection) add(collection(account, remote.href, remote.displayName, CollectionKind.FILE_ROOT, remote.syncToken, remote.ctag))
+                    if (remote.isCalendar &&
+                        remote.supportsEvents
+                    ) {
+                        add(
+                            collection(account, remote.href, remote.displayName, CollectionKind.CALENDAR, remote.syncToken, remote.ctag)
+                        )
+                    }
+                    if (remote.isCalendar &&
+                        remote.supportsTasks
+                    ) {
+                        add(
+                            collection(
+                                account,
+                                remote.href,
+                                remote.displayName,
+                                CollectionKind.TASK_LIST,
+                                remote.syncToken,
+                                remote.ctag
+                            )
+                        )
+                    }
+                    if (account.kind == AccountKind.NASDRIVE &&
+                        remote.isCollection
+                    ) {
+                        add(
+                            collection(
+                                account,
+                                remote.href,
+                                remote.displayName,
+                                CollectionKind.FILE_ROOT,
+                                remote.syncToken,
+                                remote.ctag
+                            )
+                        )
+                    }
                 }
             }
             dao.upsertCollections(collections)
@@ -51,7 +83,9 @@ class SyncEngine(
                     CollectionKind.TASK_LIST -> pullCalendar(account, password, collection, "VTODO", from, until)
                     CollectionKind.FILE_ROOT -> {
                         pullFileIndex(account, password, collection)
-                        dao.enabledMirrors().filter { it.collectionId == collection.id }.forEach { mirrorSyncEngine.synchronize(account, password, collection, it) }
+                        dao.enabledMirrors().filter {
+                            it.collectionId == collection.id
+                        }.forEach { mirrorSyncEngine.synchronize(account, password, collection, it) }
                     }
                     CollectionKind.SHARE -> Unit
                 }
@@ -71,13 +105,21 @@ class SyncEngine(
                 when (pending.mutationKind) {
                     MutationKind.CREATE, MutationKind.UPDATE -> {
                         val etag = dav.put(
-                            account, password, pending.targetHref,
-                            pending.payload.orEmpty().encodeToByteArray(), "text/calendar; charset=utf-8",
-                            pending.baseEtag, createOnly = pending.mutationKind == MutationKind.CREATE,
+                            account,
+                            password,
+                            pending.targetHref,
+                            pending.payload.orEmpty().encodeToByteArray(),
+                            "text/calendar; charset=utf-8",
+                            pending.baseEtag,
+                            createOnly = pending.mutationKind == MutationKind.CREATE
                         )
                         when (pending.objectKind) {
-                            ObjectKind.EVENT -> dao.event(pending.objectId)?.let { dao.upsertEvent(it.copy(remoteHref = pending.targetHref, etag = etag, status = SyncStatus.CLEAN)) }
-                            ObjectKind.TASK -> dao.task(pending.objectId)?.let { dao.upsertTask(it.copy(remoteHref = pending.targetHref, etag = etag, status = SyncStatus.CLEAN)) }
+                            ObjectKind.EVENT -> dao.event(pending.objectId)?.let {
+                                dao.upsertEvent(it.copy(remoteHref = pending.targetHref, etag = etag, status = SyncStatus.CLEAN))
+                            }
+                            ObjectKind.TASK -> dao.task(pending.objectId)?.let {
+                                dao.upsertTask(it.copy(remoteHref = pending.targetHref, etag = etag, status = SyncStatus.CLEAN))
+                            }
                             ObjectKind.FILE -> Unit
                         }
                     }
@@ -111,7 +153,7 @@ class SyncEngine(
         collection: DavCollectionEntity,
         component: String,
         from: Instant,
-        until: Instant,
+        until: Instant
     ) {
         // A successful REPORT is a bounded snapshot, not proof that objects outside this window were deleted.
         // Consequently this path only upserts; RFC 6578 tombstones may delete once implemented.
@@ -119,7 +161,10 @@ class SyncEngine(
             val raw = remote.calendarData ?: return@forEach
             val parsed = IcalendarCodec.parse(collection.id, remote.href, remote.etag, raw)
             if (component == "VEVENT") {
-                val preserveLocalProjection = parsed.events.any { incoming -> dao.event(incoming.id)?.status?.let { it != SyncStatus.CLEAN } == true }
+                val preserveLocalProjection = parsed.events.any { incoming ->
+                    dao.event(incoming.id)?.status?.let { it != SyncStatus.CLEAN } ==
+                        true
+                }
                 val accepted = parsed.events.mapNotNull { incoming ->
                     val local = dao.event(incoming.id)
                     when {
@@ -130,18 +175,27 @@ class SyncEngine(
                 }
                 dao.upsertEvents(accepted)
                 if (!preserveLocalProjection) {
-                    val projection = RecurrenceProjector.project(collection.id, remote.href, raw, from.toEpochMilli(), until.toEpochMilli(), ZoneId.systemDefault())
+                    val projection = RecurrenceProjector.project(
+                        collection.id,
+                        remote.href,
+                        raw,
+                        from.toEpochMilli(),
+                        until.toEpochMilli(),
+                        ZoneId.systemDefault()
+                    )
                     dao.replaceOccurrencesForHref(collection.id, remote.href, projection)
                 }
             } else {
-                dao.upsertTasks(parsed.tasks.mapNotNull { incoming ->
-                    val local = dao.task(incoming.id)
-                    when {
-                        local == null || local.status == SyncStatus.CLEAN -> incoming
-                        local.etag != null && local.etag != incoming.etag -> local.copy(status = SyncStatus.CONFLICT)
-                        else -> local
+                dao.upsertTasks(
+                    parsed.tasks.mapNotNull { incoming ->
+                        val local = dao.task(incoming.id)
+                        when {
+                            local == null || local.status == SyncStatus.CLEAN -> incoming
+                            local.etag != null && local.etag != incoming.etag -> local.copy(status = SyncStatus.CONFLICT)
+                            else -> local
+                        }
                     }
-                })
+                )
             }
         }
     }
@@ -156,7 +210,7 @@ class SyncEngine(
         collection: DavCollectionEntity,
         parentHref: String,
         inheritedPinned: Boolean,
-        budget: IntArray,
+        budget: IntArray
     ) {
         if (budget[0] <= 0) error("Pinned folder exceeds the 10,000 item safety limit")
         val remote = dav.list(account, password, parentHref)
@@ -171,13 +225,16 @@ class SyncEngine(
                 modifiedAt = resource.modifiedAt, etag = resource.etag,
                 offlinePolicy = if (inheritedPinned) OfflinePolicy.PINNED else existing?.offlinePolicy ?: OfflinePolicy.ONLINE_ONLY,
                 localUri = existing?.localUri, localContentHash = existing?.localContentHash,
-                lastSyncedEtag = existing?.lastSyncedEtag, status = existing?.status ?: SyncStatus.CLEAN,
+                lastSyncedEtag = existing?.lastSyncedEtag, status = existing?.status ?: SyncStatus.CLEAN
             )
         }
         dao.upsertFiles(indexed)
         indexed.filter { it.offlinePolicy == OfflinePolicy.PINNED }.forEach { file ->
-            if (file.isDirectory) indexFolder(account, password, collection, file.href, inheritedPinned = true, budget)
-            else downloadIfNeeded(account, password, file)
+            if (file.isDirectory) {
+                indexFolder(account, password, collection, file.href, inheritedPinned = true, budget)
+            } else {
+                downloadIfNeeded(account, password, file)
+            }
         }
     }
 
@@ -198,11 +255,20 @@ class SyncEngine(
     }
 
     private fun collection(
-        account: DavAccountEntity, href: String, displayName: String, kind: CollectionKind, syncToken: String?, ctag: String?,
+        account: DavAccountEntity,
+        href: String,
+        displayName: String,
+        kind: CollectionKind,
+        syncToken: String?,
+        ctag: String?
     ) = DavCollectionEntity(
-        id = stableId(account.id, "$href|$kind"), accountId = account.id, href = href,
-        displayName = displayName.ifBlank { href.trimEnd('/').substringAfterLast('/') }, kind = kind,
-        syncToken = syncToken, ctag = ctag,
+        id = stableId(account.id, "$href|$kind"),
+        accountId = account.id,
+        href = href,
+        displayName = displayName.ifBlank { href.trimEnd('/').substringAfterLast('/') },
+        kind = kind,
+        syncToken = syncToken,
+        ctag = ctag
     )
 
     private fun stableId(namespace: String, value: String) = UUID.nameUUIDFromBytes("$namespace|$value".encodeToByteArray()).toString()

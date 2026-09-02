@@ -19,19 +19,42 @@ data class DavResource(
     val syncToken: String? = null,
     val ctag: String? = null,
     val currentUserPrincipalHref: String? = null,
-    val calendarHomeHref: String? = null,
+    val calendarHomeHref: String? = null
 )
 
 class DavHttpException(val code: Int, message: String) : Exception(message)
 
 interface DavClient {
     suspend fun discoverCollections(account: DavAccountEntity, password: CharArray): List<DavResource>
-    suspend fun calendarQuery(account: DavAccountEntity, password: CharArray, collectionHref: String, component: String, from: Instant, until: Instant): List<DavResource>
+    suspend fun calendarQuery(
+        account: DavAccountEntity,
+        password: CharArray,
+        collectionHref: String,
+        component: String,
+        from: Instant,
+        until: Instant
+    ): List<DavResource>
     suspend fun list(account: DavAccountEntity, password: CharArray, href: String): List<DavResource>
     suspend fun get(account: DavAccountEntity, password: CharArray, href: String): InputStream
-    suspend fun put(account: DavAccountEntity, password: CharArray, href: String, body: ByteArray, contentType: String, etag: String?, createOnly: Boolean = false): String?
-    suspend fun putStream(account: DavAccountEntity, password: CharArray, href: String, body: () -> InputStream, size: Long?, contentType: String, etag: String?, createOnly: Boolean = false): String? =
-        body().use { put(account, password, href, it.readBytes(), contentType, etag, createOnly) }
+    suspend fun put(
+        account: DavAccountEntity,
+        password: CharArray,
+        href: String,
+        body: ByteArray,
+        contentType: String,
+        etag: String?,
+        createOnly: Boolean = false
+    ): String?
+    suspend fun putStream(
+        account: DavAccountEntity,
+        password: CharArray,
+        href: String,
+        body: () -> InputStream,
+        size: Long?,
+        contentType: String,
+        etag: String?,
+        createOnly: Boolean = false
+    ): String? = body().use { put(account, password, href, it.readBytes(), contentType, etag, createOnly) }
     suspend fun delete(account: DavAccountEntity, password: CharArray, href: String, etag: String?)
     suspend fun makeCollection(account: DavAccountEntity, password: CharArray, href: String)
 }

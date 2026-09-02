@@ -17,7 +17,7 @@ data class InkDavSettings(
     val wifiOnlyFiles: Boolean = true,
     val boldText: Boolean = true,
     val pageNavigation: Boolean = true,
-    val hiddenCalendarIds: Set<String> = emptySet(),
+    val hiddenCalendarIds: Set<String> = emptySet()
 )
 
 class UserPreferences(private val context: Context) {
@@ -37,7 +37,7 @@ class UserPreferences(private val context: Context) {
             wifiOnlyFiles = value[Keys.wifiOnlyFiles] ?: true,
             boldText = value[Keys.boldText] ?: true,
             pageNavigation = value[Keys.pageNavigation] ?: true,
-            hiddenCalendarIds = value[Keys.hiddenCalendarIds] ?: emptySet(),
+            hiddenCalendarIds = value[Keys.hiddenCalendarIds] ?: emptySet()
         )
     }
 

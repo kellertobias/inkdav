@@ -32,7 +32,7 @@ object IcalendarCodec {
                 startEpochMillis = start.epochMillis, endEpochMillis = end.epochMillis,
                 allDay = start.allDay, timezone = start.timezone,
                 recurrenceRule = fields.value("RRULE"), recurrenceId = fields.value("RECURRENCE-ID"),
-                rawIcal = input,
+                rawIcal = input
             )
         }
         val tasks = components(lines, "VTODO").mapNotNull { fields ->
@@ -46,7 +46,7 @@ object IcalendarCodec {
                 startEpochMillis = fields.date("DTSTART")?.epochMillis,
                 completedAt = fields.date("COMPLETED")?.epochMillis,
                 priority = fields.value("PRIORITY")?.toIntOrNull() ?: 0,
-                recurrenceRule = fields.value("RRULE"), rawIcal = input,
+                recurrenceRule = fields.value("RRULE"), rawIcal = input
             )
         }
         return Parsed(events, tasks)
@@ -79,7 +79,9 @@ object IcalendarCodec {
         task.dueEpochMillis?.let { append("DUE:").append(utc(it)).append("\r\n") }
         if (task.completedAt != null) {
             append("STATUS:COMPLETED\r\nCOMPLETED:").append(utc(task.completedAt)).append("\r\n")
-        } else append("STATUS:NEEDS-ACTION\r\n")
+        } else {
+            append("STATUS:NEEDS-ACTION\r\n")
+        }
         task.recurrenceRule?.let { append("RRULE:").append(it).append("\r\n") }
         append("END:VTODO\r\nEND:VCALENDAR\r\n")
     }
@@ -90,7 +92,7 @@ object IcalendarCodec {
             "DTEND" to dateLine("DTEND", event.endEpochMillis, event.allDay),
             "SUMMARY" to "SUMMARY:${escape(event.title)}",
             "DESCRIPTION" to event.description.takeIf(String::isNotBlank)?.let { "DESCRIPTION:${escape(it)}" },
-            "LOCATION" to event.location.takeIf(String::isNotBlank)?.let { "LOCATION:${escape(it)}" },
+            "LOCATION" to event.location.takeIf(String::isNotBlank)?.let { "LOCATION:${escape(it)}" }
         )
         return patchComponent(
             raw,
@@ -99,18 +101,23 @@ object IcalendarCodec {
             replacements,
             mapOf(
                 "DTSTART" to DatePatch(event.startEpochMillis, event.allDay, event.timezone),
-                "DTEND" to DatePatch(event.endEpochMillis, event.allDay, event.timezone),
-            ),
+                "DTEND" to DatePatch(event.endEpochMillis, event.allDay, event.timezone)
+            )
         )
     }
 
-    fun patchTask(raw: String, task: DavTaskEntity): String = patchComponent(raw, "VTODO", null, linkedMapOf(
-        "SUMMARY" to "SUMMARY:${escape(task.title)}",
-        "DESCRIPTION" to task.notes.takeIf(String::isNotBlank)?.let { "DESCRIPTION:${escape(it)}" },
-        "DUE" to task.dueEpochMillis?.let { "DUE:${utc(it)}" },
-        "STATUS" to if (task.completedAt == null) "STATUS:NEEDS-ACTION" else "STATUS:COMPLETED",
-        "COMPLETED" to task.completedAt?.let { "COMPLETED:${utc(it)}" },
-    ))
+    fun patchTask(raw: String, task: DavTaskEntity): String = patchComponent(
+        raw,
+        "VTODO",
+        null,
+        linkedMapOf(
+            "SUMMARY" to "SUMMARY:${escape(task.title)}",
+            "DESCRIPTION" to task.notes.takeIf(String::isNotBlank)?.let { "DESCRIPTION:${escape(it)}" },
+            "DUE" to task.dueEpochMillis?.let { "DUE:${utc(it)}" },
+            "STATUS" to if (task.completedAt == null) "STATUS:NEEDS-ACTION" else "STATUS:COMPLETED",
+            "COMPLETED" to task.completedAt?.let { "COMPLETED:${utc(it)}" }
+        )
+    )
 
     private data class DatePatch(val epochMillis: Long, val allDay: Boolean, val timezone: String?)
 
@@ -119,7 +126,7 @@ object IcalendarCodec {
         component: String,
         recurrenceId: String?,
         replacements: Map<String, String?>,
-        datePatches: Map<String, DatePatch> = emptyMap(),
+        datePatches: Map<String, DatePatch> = emptyMap()
     ): String {
         val lines = unfold(raw).toMutableList()
         var start = -1
@@ -129,8 +136,13 @@ object IcalendarCodec {
             if (line == "BEGIN:$component") candidate = index
             if (candidate >= 0 && line == "END:$component") {
                 val block = lines.subList(candidate, index + 1)
-                val blockRecurrence = block.firstOrNull { it.substringBefore(';').substringBefore(':').equals("RECURRENCE-ID", true) }?.substringAfter(':')
-                if ((recurrenceId == null && blockRecurrence == null) || recurrenceId == blockRecurrence) { start = candidate; end = index }
+                val blockRecurrence = block.firstOrNull {
+                    it.substringBefore(';').substringBefore(':').equals("RECURRENCE-ID", true)
+                }?.substringAfter(':')
+                if ((recurrenceId == null && blockRecurrence == null) || recurrenceId == blockRecurrence) {
+                    start = candidate
+                    end = index
+                }
                 candidate = -1
             }
         }
@@ -139,8 +151,16 @@ object IcalendarCodec {
             val index = (start + 1 until end).firstOrNull { lines[it].substringBefore(';').substringBefore(':').equals(name, true) }
             val effectiveReplacement = datePatches[name]?.let { dateLine(name, it, index?.let(lines::get)) } ?: replacement
             if (index != null) {
-                if (effectiveReplacement == null) { lines.removeAt(index); end-- } else lines[index] = effectiveReplacement
-            } else if (effectiveReplacement != null) { lines.add(end, effectiveReplacement); end++ }
+                if (effectiveReplacement == null) {
+                    lines.removeAt(index)
+                    end--
+                } else {
+                    lines[index] = effectiveReplacement
+                }
+            } else if (effectiveReplacement != null) {
+                lines.add(end, effectiveReplacement)
+                end++
+            }
         }
         return lines.joinToString("\r\n", postfix = "\r\n")
     }
@@ -158,7 +178,9 @@ object IcalendarCodec {
         val originalTimezone = originalHead?.let { Regex("(?:^|;)TZID=([^;:]+)", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
         if (originalTimezone != null) {
             val originalZone = runCatching { ZoneId.of(originalTimezone) }.getOrDefault(zone)
-            val value = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss").format(Instant.ofEpochMilli(patch.epochMillis).atZone(originalZone))
+            val value = DateTimeFormatter.ofPattern(
+                "yyyyMMdd'T'HHmmss"
+            ).format(Instant.ofEpochMilli(patch.epochMillis).atZone(originalZone))
             return "$originalHead:$value"
         }
         if (originalValue?.endsWith("Z") == false && originalHead != null) {
@@ -175,16 +197,23 @@ object IcalendarCodec {
         val result = mutableListOf<List<Field>>()
         var current: MutableList<Field>? = null
         lines.forEach { line ->
-            if (line == "BEGIN:$name") current = mutableListOf()
-            else if (line == "END:$name") current?.let(result::add).also { current = null }
-            else current?.let { target -> parseField(line)?.let(target::add) }
+            if (line == "BEGIN:$name") {
+                current = mutableListOf()
+            } else if (line == "END:$name") {
+                current?.let(result::add).also { current = null }
+            } else {
+                current?.let { target -> parseField(line)?.let(target::add) }
+            }
         }
         return result
     }
 
     private fun unfold(input: String): List<String> = input.replace("\r\n", "\n").split('\n').fold(mutableListOf()) { out, line ->
-        if ((line.startsWith(' ') || line.startsWith('\t')) && out.isNotEmpty()) out[out.lastIndex] += line.drop(1)
-        else out += line.trimEnd('\r')
+        if ((line.startsWith(' ') || line.startsWith('\t')) && out.isNotEmpty()) {
+            out[out.lastIndex] += line.drop(1)
+        } else {
+            out += line.trimEnd('\r')
+        }
         out
     }
 
@@ -196,7 +225,7 @@ object IcalendarCodec {
         return Field(
             key = (if (semicolon < 0) head else head.substring(0, semicolon)).uppercase(),
             parameters = if (semicolon < 0) "" else head.substring(semicolon + 1),
-            content = line.substring(colon + 1),
+            content = line.substring(colon + 1)
         )
     }
 
@@ -206,18 +235,28 @@ object IcalendarCodec {
             val isDate = field.parameters.contains("VALUE=DATE", true) || field.content.length == 8
             val timezone = Regex("(?:^|;)TZID=([^;:]+)", RegexOption.IGNORE_CASE).find(field.parameters)?.groupValues?.get(1)
             val instant = when {
-                isDate -> LocalDate.parse(field.content.take(8), DateTimeFormatter.BASIC_ISO_DATE).atStartOfDay(ZoneId.systemDefault()).toInstant()
-                field.content.endsWith("Z") -> Instant.from(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssX").withZone(ZoneOffset.UTC).parse(field.content))
-                else -> LocalDateTime.parse(field.content, DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")).atZone(timezone?.let(ZoneId::of) ?: ZoneId.systemDefault()).toInstant()
+                isDate -> LocalDate.parse(
+                    field.content.take(8),
+                    DateTimeFormatter.BASIC_ISO_DATE
+                ).atStartOfDay(ZoneId.systemDefault()).toInstant()
+                field.content.endsWith(
+                    "Z"
+                ) -> Instant.from(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssX").withZone(ZoneOffset.UTC).parse(field.content))
+                else -> LocalDateTime.parse(field.content, DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")).atZone(
+                    timezone?.let(ZoneId::of) ?: ZoneId.systemDefault()
+                ).toInstant()
             }
             DateValue(instant.toEpochMilli(), isDate, timezone)
         }.getOrNull()
     }
 
-    fun stableId(collectionId: String, uid: String, recurrenceId: String? = null): String =
-        UUID.nameUUIDFromBytes("$collectionId|$uid|$recurrenceId".encodeToByteArray()).toString()
-    private fun StringBuilder.appendHeader() { append("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//InkDAV//Android//EN\r\n") }
-    private fun StringBuilder.optional(name: String, value: String) { if (value.isNotBlank()) append(name).append(':').append(escape(value)).append("\r\n") }
+    fun stableId(collectionId: String, uid: String, recurrenceId: String? = null): String = UUID.nameUUIDFromBytes("$collectionId|$uid|$recurrenceId".encodeToByteArray()).toString()
+    private fun StringBuilder.appendHeader() {
+        append("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//InkDAV//Android//EN\r\n")
+    }
+    private fun StringBuilder.optional(name: String, value: String) {
+        if (value.isNotBlank()) append(name).append(':').append(escape(value)).append("\r\n")
+    }
     private fun utc(epoch: Long) = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(epoch))
     private fun day(epoch: Long) = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(epoch))
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")

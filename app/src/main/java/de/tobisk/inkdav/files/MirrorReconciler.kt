@@ -9,14 +9,16 @@ object MirrorReconciler {
         baselineLocal: String?,
         remote: String?,
         local: String?,
-        contentsEqual: Boolean = false,
+        contentsEqual: Boolean = false
     ): MirrorDecision {
-        if (!baselined) return when {
-            remote == null && local == null -> MirrorDecision.NO_CHANGE
-            remote == null -> MirrorDecision.UPLOAD
-            local == null -> MirrorDecision.DOWNLOAD
-            contentsEqual -> MirrorDecision.BASELINE_EQUAL
-            else -> MirrorDecision.CONFLICT
+        if (!baselined) {
+            return when {
+                remote == null && local == null -> MirrorDecision.NO_CHANGE
+                remote == null -> MirrorDecision.UPLOAD
+                local == null -> MirrorDecision.DOWNLOAD
+                contentsEqual -> MirrorDecision.BASELINE_EQUAL
+                else -> MirrorDecision.CONFLICT
+            }
         }
         val remoteChanged = remote != baselineRemote
         val localChanged = local != baselineLocal
