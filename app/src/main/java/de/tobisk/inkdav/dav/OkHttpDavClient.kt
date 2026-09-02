@@ -37,6 +37,14 @@ class OkHttpDavClient(
         val homeUrl = home?.let { resolve(principalUrl, it) } ?: account.baseUrl
         return propfind(account, password, homeUrl, 1, COLLECTION_PROPERTIES)
             .filter { it.href.trimEnd('/') != URI(homeUrl).path.trimEnd('/') }
+            .map { resource ->
+                if (resource.isCalendar) {
+                    resource.copy(href = normalizeCalendarCollectionHref(resource.href))
+                } else {
+                    resource
+                }
+            }
+            .distinctBy { "${it.href}|${it.supportsEvents}|${it.supportsTasks}" }
     }
 
     override suspend fun calendarQuery(

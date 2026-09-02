@@ -24,4 +24,32 @@ class DavEndpointTest {
             normalizeDavBaseUrl("https://example.test/dav/calendars/person", AccountKind.DAV)
         )
     }
+
+    @Test
+    fun appendedPrincipalPathIsRemovedFromCalendarCollection() {
+        assertEquals(
+            "/dav/calendars/person/travel/",
+            normalizeCalendarCollectionHref(
+                "/dav/calendars/person/travel/dav/principals/person/"
+            )
+        )
+        assertEquals(
+            "https://example.test/dav/calendars/person/travel/",
+            normalizeCalendarCollectionHref(
+                "https://example.test/dav/calendars/person/travel/dav/principals/person/"
+            )
+        )
+    }
+
+    @Test
+    fun legitimateCalendarCollectionHrefRemainsUnchanged() {
+        assertEquals(
+            "/dav/calendars/person/travel/",
+            normalizeCalendarCollectionHref("/dav/calendars/person/travel/")
+        )
+        assertEquals(
+            "/remote.php/dav/calendars/person/travel/",
+            normalizeCalendarCollectionHref("/remote.php/dav/calendars/person/travel/")
+        )
+    }
 }
