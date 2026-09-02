@@ -1,3 +1,9 @@
+## [1.3.1](https://github.com/kellertobias/[secure]/compare/v1.3.0...v1.3.1) (2026-09-02)
+
+### Bug Fixes
+
+* resolve root-relative DAV hrefs ([db14300](https://github.com/kellertobias/[secure]/commit/db1430082a7718dab57f3d4ee74940df4afef649))
+
 ## [1.3.0](https://github.com/kellertobias/[secure]/compare/v1.2.1...v1.3.0) (2026-09-02)
 
 ### Features
