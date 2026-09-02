@@ -333,7 +333,14 @@ class OkHttpDavClient(
     private fun httpDate(value: String) = runCatching {
         ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
     }.getOrNull()
-    private fun resolve(base: String, href: String): String = URI(base).resolve(href).toString()
+    internal fun resolve(base: String, href: String): String {
+        val trimmed = href.trim()
+        // Some DAV servers emit origin-relative hrefs without the leading slash
+        // (for example "dav/principals/user/"). Treat that well-known DAV root
+        // as origin-relative instead of nesting it below the current collection.
+        val compatibleHref = if (trimmed.startsWith("dav/", ignoreCase = true)) "/$trimmed" else trimmed
+        return URI(base).resolve(compatibleHref).toString()
+    }
     private fun xmlEscape(value: String) = value
         .replace("&", "&amp;")
         .replace("<", "&lt;")

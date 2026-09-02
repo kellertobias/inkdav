@@ -8,6 +8,26 @@ import org.kxml2.io.KXmlParser
 
 class OkHttpDavClientTest {
     @Test
+    fun `server DAV href without leading slash resolves from origin`() {
+        val resolved = OkHttpDavClient().resolve(
+            "https://example.test/dav/calendars/user/personal/",
+            "dav/principals/user/"
+        )
+
+        assertEquals("https://example.test/dav/principals/user/", resolved)
+    }
+
+    @Test
+    fun `ordinary relative resource remains relative to its collection`() {
+        val resolved = OkHttpDavClient().resolve(
+            "https://example.test/dav/calendars/user/personal/",
+            "event.ics"
+        )
+
+        assertEquals("https://example.test/dav/calendars/user/personal/event.ics", resolved)
+    }
+
+    @Test
     fun `sync multistatus distinguishes direct tombstones and returns collection token`() {
         val xml = """<?xml version="1.0" encoding="utf-8"?>
             <d:multistatus xmlns:d="DAV:">
