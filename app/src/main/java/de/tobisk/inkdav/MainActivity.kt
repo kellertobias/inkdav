@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
         val ink = 0xff111111.toInt()
         window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = ink
         window.navigationBarColor = paper
         showSystemBars()

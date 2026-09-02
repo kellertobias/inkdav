@@ -113,37 +113,44 @@ fun InkDavApp(model: MainViewModel) {
             )
         )
     ) {
-        Column(Modifier.fillMaxSize().background(Paper).safeDrawingPadding()) {
-            TopNavigation(destination) { model.destination.value = it }
-            if (destination == Destination.CALENDAR) {
-                CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts)
-            } else {
-                AppHeader(destination.label, pending, accounts, model::sync)
-            }
-            Box(Modifier.fillMaxWidth().weight(1f, fill = true)) {
-                when (destination) {
-                    Destination.CALENDAR -> CalendarScreen(
-                        model,
-                        selectedDate,
-                        calendarMode,
-                        events.filterNot {
-                            it.collectionId in
-                                settings.hiddenCalendarIds
-                        },
-                        collections
-                    )
-                    Destination.TASKS -> TasksScreen(model, scheduledTasks, tasks, collections)
-                    Destination.FILES -> FilesScreen(model, files, mirrorFiles, collections, settings)
-                    Destination.SYNC -> SyncScreen(
-                        accounts,
-                        pending,
-                        conflictingEvents,
-                        conflictingTasks,
-                        model::sync,
-                        model::resolveEventConflict,
-                        model::resolveTaskConflict
-                    )
-                    Destination.SETTINGS -> SettingsScreen(model, accounts, settings)
+        Box(Modifier.fillMaxSize().background(Paper)) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(Ink)
+            )
+            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+                TopNavigation(destination) { model.destination.value = it }
+                if (destination == Destination.CALENDAR) {
+                    CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts)
+                } else {
+                    AppHeader(destination.label, pending, accounts, model::sync)
+                }
+                Box(Modifier.fillMaxWidth().weight(1f, fill = true)) {
+                    when (destination) {
+                        Destination.CALENDAR -> CalendarScreen(
+                            model,
+                            selectedDate,
+                            calendarMode,
+                            events.filterNot {
+                                it.collectionId in
+                                    settings.hiddenCalendarIds
+                            },
+                            collections
+                        )
+                        Destination.TASKS -> TasksScreen(model, scheduledTasks, tasks, collections)
+                        Destination.FILES -> FilesScreen(model, files, mirrorFiles, collections, settings)
+                        Destination.SYNC -> SyncScreen(
+                            accounts,
+                            pending,
+                            conflictingEvents,
+                            conflictingTasks,
+                            model::sync,
+                            model::resolveEventConflict,
+                            model::resolveTaskConflict
+                        )
+                        Destination.SETTINGS -> SettingsScreen(model, accounts, settings)
+                    }
                 }
             }
         }
