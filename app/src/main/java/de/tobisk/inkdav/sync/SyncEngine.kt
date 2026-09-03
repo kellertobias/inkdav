@@ -71,6 +71,7 @@ class SyncEngine(
                                 CollectionKind.CALENDAR,
                                 remote.syncToken,
                                 remote.ctag,
+                                remote.colorArgb,
                                 existingCollections
                             )
                         )
@@ -86,6 +87,7 @@ class SyncEngine(
                                 CollectionKind.TASK_LIST,
                                 remote.syncToken,
                                 remote.ctag,
+                                remote.colorArgb,
                                 existingCollections
                             )
                         )
@@ -101,6 +103,7 @@ class SyncEngine(
                                 CollectionKind.FILE_ROOT,
                                 remote.syncToken,
                                 remote.ctag,
+                                remote.colorArgb,
                                 existingCollections
                             )
                         )
@@ -407,6 +410,7 @@ class SyncEngine(
         kind: CollectionKind,
         syncToken: String?,
         ctag: String?,
+        colorArgb: Long?,
         existingCollections: Map<String, DavCollectionEntity>
     ): DiscoveredCollection {
         val existing = existingCollections["$href|$kind"]
@@ -417,7 +421,7 @@ class SyncEngine(
                 href = href,
                 displayName = displayName.ifBlank { href.trimEnd('/').substringAfterLast('/') },
                 kind = kind,
-                colorArgb = existing?.colorArgb ?: 0xff243b53,
+                colorArgb = colorArgb ?: existing?.colorArgb ?: 0xff243b53,
                 readOnly = existing?.readOnly ?: false,
                 visible = existing?.visible ?: true,
                 // Discovery's current token must never overwrite the last successfully applied token.

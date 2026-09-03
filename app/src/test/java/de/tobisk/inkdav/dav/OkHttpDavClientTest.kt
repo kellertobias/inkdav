@@ -76,4 +76,25 @@ class OkHttpDavClientTest {
         assertEquals("/dav/calendars/user/personal/", resource.href)
         assertEquals("Personal", resource.displayName)
     }
+
+    @Test
+    fun `calendar colors convert from css rgba to android argb`() {
+        assertEquals(0xff336699L, parseDavColor("#336699"))
+        assertEquals(0x80336699L, parseDavColor("#33669980"))
+        assertEquals(null, parseDavColor("not-a-color"))
+    }
+
+    @Test
+    fun `calendar color is read from collection discovery`() {
+        val xml = """<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:a="http://apple.com/ns/ical/">
+            <d:response><d:href>/calendar/work/</d:href><d:propstat><d:prop>
+              <d:displayname>Work</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+              <a:calendar-color>#c04020ff</a:calendar-color>
+            </d:prop></d:propstat></d:response>
+          </d:multistatus>"""
+
+        val resource = OkHttpDavClient().parseMultiStatus(xml.byteInputStream(), KXmlParser()).resources.single()
+
+        assertEquals(0xffc04020L, resource.colorArgb)
+    }
 }

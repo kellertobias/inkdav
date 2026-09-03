@@ -390,6 +390,8 @@ private fun CalendarVisibilityDialog(
                         }.padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Box(Modifier.size(12.dp).background(Color(calendar.colorArgb)))
+                        Spacer(Modifier.width(8.dp))
                         Checkbox(visible, { setVisible(calendar.id, it) })
                         Text(calendar.displayName, fontWeight = FontWeight.Medium)
                     }
@@ -475,7 +477,7 @@ private fun MonthView(
                 repeat(7) { offset ->
                     val day = first.plusDays((week * 7 + offset).toLong())
                     val dayEvents = events.filter { eventDate(it.startEpochMillis) == day }
-                    Column(
+                    BoxWithConstraints(
                         Modifier.weight(1f).fillMaxHeight().border(
                             if (day ==
                                 LocalDate.now()
@@ -492,26 +494,34 @@ private fun MonthView(
                             }
                             .padding(5.dp)
                     ) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                day.dayOfMonth.toString(),
-                                color = if (day.month ==
-                                    month.month
-                                ) {
-                                    Ink
-                                } else {
-                                    MutedInk
-                                },
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(Modifier.weight(1f))
-                            DayAddButton("Add event on ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}") { addEvent(day) }
+                        val allocation = monthEventAllocation(dayEvents.size, maxHeight.value)
+                        Column(Modifier.fillMaxSize()) {
+                            Row(
+                                Modifier.fillMaxWidth().height(MONTH_DAY_HEADER_HEIGHT),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    day.dayOfMonth.toString(),
+                                    color = if (day.month == month.month) Ink else MutedInk,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.weight(1f))
+                                DayAddButton("Add event on ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}") { addEvent(day) }
+                            }
+                            dayEvents.take(allocation.visibleEvents).forEach { event ->
+                                val collection = collectionMap[event.collectionId]
+                                MonthEventRow(event, collection?.colorArgb?.let(::Color) ?: Accent)
+                            }
+                            if (allocation.hiddenEvents > 0) {
+                                Text(
+                                    "+${allocation.hiddenEvents} more",
+                                    modifier = Modifier.height(MONTH_EVENT_ROW_HEIGHT),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
                         }
-                        dayEvents.take(4).forEach { event ->
-                            val collection = collectionMap[event.collectionId]
-                            MonthEventRow(event, collection?.colorArgb?.let(::Color) ?: Accent)
-                        }
-                        if (dayEvents.size > 4) Text("+${dayEvents.size - 4} more", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -523,7 +533,8 @@ private fun MonthView(
 private fun MonthEventRow(event: CalendarOccurrenceEntity, eventColor: Color) {
     if (event.allDay) {
         Row(
-            Modifier.fillMaxWidth().padding(top = 2.dp).background(eventColor).padding(horizontal = 3.dp, vertical = 1.dp),
+            Modifier.fillMaxWidth().height(MONTH_EVENT_ROW_HEIGHT).padding(top = 2.dp).background(eventColor)
+                .padding(horizontal = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -538,7 +549,7 @@ private fun MonthEventRow(event: CalendarOccurrenceEntity, eventColor: Color) {
         }
     } else {
         val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault())
-        Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(MONTH_EVENT_ROW_HEIGHT).padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(2.dp, 12.dp).background(eventColor))
             Spacer(Modifier.width(3.dp))
             Text(
@@ -559,6 +570,20 @@ private fun MonthEventRow(event: CalendarOccurrenceEntity, eventColor: Color) {
         }
     }
 }
+
+internal data class MonthEventAllocation(val visibleEvents: Int, val hiddenEvents: Int)
+
+internal fun monthEventAllocation(eventCount: Int, contentHeightDp: Float): MonthEventAllocation {
+    val availableHeight = (contentHeightDp - MONTH_DAY_HEADER_HEIGHT.value).coerceAtLeast(0f)
+    val slots = (availableHeight / MONTH_EVENT_ROW_HEIGHT.value).toInt()
+    if (eventCount <= slots) return MonthEventAllocation(eventCount, 0)
+    if (slots <= 0) return MonthEventAllocation(0, eventCount)
+    val visible = (slots - 1).coerceAtLeast(0)
+    return MonthEventAllocation(visible, eventCount - visible)
+}
+
+private val MONTH_DAY_HEADER_HEIGHT = 30.dp
+private val MONTH_EVENT_ROW_HEIGHT = 17.dp
 
 @Composable
 private fun YearView(date: LocalDate, events: List<CalendarOccurrenceEntity>, model: MainViewModel) {
@@ -729,6 +754,7 @@ private fun DayView(
                 items(matching, key = CalendarOccurrenceEntity::id) { event ->
                     val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault())
                     val end = Instant.ofEpochMilli(event.endEpochMillis).atZone(ZoneId.systemDefault())
+                    val eventColor = collections.firstOrNull { it.id == event.collectionId }?.colorArgb?.let(::Color) ?: Accent
                     val time = if (event.allDay) {
                         "ALL DAY"
                     } else {
@@ -742,6 +768,8 @@ private fun DayView(
                         }.padding(14.dp),
                         verticalAlignment = Alignment.Top
                     ) {
+                        Box(Modifier.width(6.dp).height(48.dp).background(eventColor))
+                        Spacer(Modifier.width(10.dp))
                         Text(time, modifier = Modifier.width(96.dp), fontWeight = FontWeight.Bold)
                         Column(Modifier.weight(1f)) {
                             Text(event.title.ifBlank { "(Untitled)" }, fontSize = 19.sp, fontWeight = FontWeight.Bold)
@@ -811,7 +839,8 @@ private fun TasksScreen(
                 TaskNavigationRow(
                     list.displayName,
                     scheduledTasks.count { it.collectionId == list.id && it.completedAt == null },
-                    selectedView == list.id
+                    selectedView == list.id,
+                    Color(list.colorArgb)
                 ) { selectedView = list.id }
             }
         }
@@ -864,12 +893,16 @@ private fun TasksScreen(
 }
 
 @Composable
-private fun TaskNavigationRow(label: String, count: Int, selected: Boolean, action: () -> Unit) {
+private fun TaskNavigationRow(label: String, count: Int, selected: Boolean, color: Color? = null, action: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 58.dp).background(if (selected) Color(0xffe4e1d7) else Paper)
             .border(if (selected) 2.dp else 1.dp, Ink).noRippleClick(action).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        color?.let {
+            Box(Modifier.width(6.dp).height(38.dp).background(it))
+            Spacer(Modifier.width(8.dp))
+        }
         Text(label, modifier = Modifier.weight(1f), fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
         Text(count.toString(), fontWeight = FontWeight.Bold)
     }
@@ -908,10 +941,14 @@ private fun InlineTaskCreator(
                     border = BorderStroke(2.dp, Ink)
                 ) {
                     lists.forEach { list ->
-                        DropdownMenuItem(text = { Text(list.displayName) }, onClick = {
-                            targetListId = list.id
-                            showLists = false
-                        })
+                        DropdownMenuItem(
+                            text = { Text(list.displayName) },
+                            onClick = {
+                                targetListId = list.id
+                                showLists = false
+                            },
+                            leadingIcon = { Box(Modifier.size(12.dp).background(Color(list.colorArgb))) }
+                        )
                     }
                 }
             }
@@ -932,7 +969,10 @@ private fun TaskRow(
     toggle: (DavTaskEntity) -> Unit,
     edit: (DavTaskEntity) -> Unit
 ) {
+    val collectionColor = collections.firstOrNull { it.id == task.collectionId }?.colorArgb?.let(::Color) ?: Accent
     Row(Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(6.dp).height(44.dp).background(collectionColor))
+        Spacer(Modifier.width(8.dp))
         InkButton(if (task.completedAt == null) "□" else "✓", task.completedAt != null, Modifier.width(52.dp)) { toggle(task) }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {

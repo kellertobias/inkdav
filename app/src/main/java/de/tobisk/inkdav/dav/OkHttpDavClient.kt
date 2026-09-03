@@ -229,7 +229,7 @@ class OkHttpDavClient(
         password,
         url,
         "PROPFIND",
-        "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop>$properties</d:prop></d:propfind>",
+        "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\" xmlns:a=\"http://apple.com/ns/ical/\"><d:prop>$properties</d:prop></d:propfind>",
         mapOf(
             "Depth" to depth.toString()
         )
@@ -327,6 +327,7 @@ class OkHttpDavClient(
                                 modifiedAt = r["getlastmodified"]?.let(::httpDate), calendarData = r["calendar-data"],
                                 syncToken = r["sync-token"], ctag = r["getctag"], currentUserPrincipalHref = r["current-user-principal"],
                                 calendarHomeHref = r["calendar-home-set"],
+                                colorArgb = parseDavColor(r["calendar-color"]),
                                 deleted = r["response-status"]?.contains(" 404 ") == true
                             )
                         }
@@ -361,7 +362,20 @@ class OkHttpDavClient(
     companion object {
         private const val DISCOVERY_PROPERTIES = "<d:current-user-principal/><c:calendar-home-set/>"
         private const val HOME_PROPERTIES = "<c:calendar-home-set/>"
-        private const val COLLECTION_PROPERTIES = "<d:displayname/><d:resourcetype/><c:supported-calendar-component-set/><d:sync-token/><cs:getctag/>"
+        private const val COLLECTION_PROPERTIES = "<d:displayname/><d:resourcetype/><c:supported-calendar-component-set/><d:sync-token/><cs:getctag/><a:calendar-color/>"
         private const val FILE_PROPERTIES = "<d:displayname/><d:resourcetype/><d:getetag/><d:getcontenttype/><d:getcontentlength/><d:getlastmodified/>"
+    }
+}
+
+internal fun parseDavColor(value: String?): Long? {
+    val hex = value?.trim()?.removePrefix("#") ?: return null
+    return when (hex.length) {
+        6 -> hex.toLongOrNull(16)?.let { 0xff000000L or it }
+        8 -> {
+            val rgb = hex.take(6).toLongOrNull(16) ?: return null
+            val alpha = hex.takeLast(2).toLongOrNull(16) ?: return null
+            (alpha shl 24) or rgb
+        }
+        else -> null
     }
 }

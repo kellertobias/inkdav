@@ -20,6 +20,7 @@ data class DavResource(
     val ctag: String? = null,
     val currentUserPrincipalHref: String? = null,
     val calendarHomeHref: String? = null,
+    val colorArgb: Long? = null,
     val deleted: Boolean = false
 )
 

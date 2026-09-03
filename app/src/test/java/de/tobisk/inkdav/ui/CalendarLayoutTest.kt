@@ -40,4 +40,10 @@ class CalendarLayoutTest {
         assertEquals(4, monthWeekCount(LocalDate.of(2021, 2, 1)))
         assertEquals(6, monthWeekCount(LocalDate.of(2026, 8, 1)))
     }
+
+    @Test
+    fun monthEventsUseAllAvailableCellHeight() {
+        assertEquals(MonthEventAllocation(8, 0), monthEventAllocation(8, 200f))
+        assertEquals(MonthEventAllocation(1, 4), monthEventAllocation(5, 80f))
+    }
 }
