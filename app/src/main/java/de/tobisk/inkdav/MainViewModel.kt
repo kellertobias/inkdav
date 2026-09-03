@@ -8,13 +8,17 @@ import android.provider.DocumentsContract
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.dav.normalizeDavBaseUrl
 import de.tobisk.inkdav.files.LocalFileBrowser
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.files.LocalFolderLocation
 import de.tobisk.inkdav.settings.InkDavSettings
+import de.tobisk.inkdav.sync.ManualSyncState
 import de.tobisk.inkdav.sync.SyncWorker
+import de.tobisk.inkdav.sync.manualSyncState as presentManualSync
 import de.tobisk.inkdav.tasks.RecurringTaskProjector
 import de.tobisk.inkdav.update.AppUpdater
 import de.tobisk.inkdav.update.UpdateState
@@ -24,6 +28,8 @@ import java.time.*
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -57,6 +63,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val localFolderStack = MutableStateFlow<List<LocalFolderLocation>>(emptyList())
     val localFilesError = MutableStateFlow<String?>(null)
     val updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val manualSyncState = MutableStateFlow(ManualSyncState())
+    private var syncObservation: Job? = null
 
     val accounts = dao.observeAccounts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val collections = dao.observeCollections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -97,7 +105,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (mirror == null) flowOf(emptyList()) else dao.observeMirrorChildren(mirror, parent)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun sync() = SyncWorker.enqueue(getApplication())
+    fun sync() {
+        val requestedAt = System.nanoTime()
+        manualSyncState.value = ManualSyncState(active = true, label = "Starting sync…", progress = 0.04f)
+        val workId = runCatching { SyncWorker.enqueue(getApplication()) }.getOrElse {
+            manualSyncState.value = ManualSyncState(label = "Sync failed to start")
+            return
+        }
+        syncObservation?.cancel()
+        syncObservation = viewModelScope.launch {
+            WorkManager.getInstance(getApplication<Application>()).getWorkInfoByIdFlow(workId)
+                .filterNotNull()
+                .collectLatest { workInfo ->
+                    val next = presentManualSync(workInfo.state, workInfo.runAttemptCount, workInfo.progress)
+                    if (workInfo.state.isFinished ||
+                        (workInfo.state == WorkInfo.State.ENQUEUED && workInfo.runAttemptCount > 0)
+                    ) {
+                        val visibleMillis = (System.nanoTime() - requestedAt) / 1_000_000
+                        delay((MINIMUM_SYNC_FEEDBACK_MILLIS - visibleMillis).coerceAtLeast(0))
+                    }
+                    manualSyncState.value = next
+                }
+        }
+    }
 
     fun currentAppVersion(): String = appUpdater.currentVersion()
 
@@ -445,3 +475,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return start.atStartOfDay(zone).toInstant().toEpochMilli() to end.atStartOfDay(zone).toInstant().toEpochMilli()
     }
 }
+
+private const val MINIMUM_SYNC_FEEDBACK_MILLIS = 900L

@@ -24,16 +24,31 @@ class SyncEngine(
     private val offlineDirectory: File,
     private val mirrorSyncEngine: MirrorSyncEngine
 ) {
+    data class Progress(
+        val completedAccounts: Int,
+        val totalAccounts: Int,
+        val accountName: String?
+    )
+
     private data class DiscoveredCollection(
         val local: DavCollectionEntity,
         val advertisedSyncToken: String?
     )
 
-    suspend fun synchronizeAll(includeFiles: Boolean = true): Boolean = dao.enabledAccounts()
-        .filter { includeFiles || it.kind != AccountKind.NASDRIVE }
-        .map { account ->
-            runCatching { synchronize(account, includeFiles) }.isSuccess
-        }.all { it }
+    suspend fun synchronizeAll(
+        includeFiles: Boolean = true,
+        onProgress: suspend (Progress) -> Unit = {}
+    ): Boolean {
+        val accounts = dao.enabledAccounts().filter { includeFiles || it.kind != AccountKind.NASDRIVE }
+        onProgress(Progress(0, accounts.size, null))
+        var allSucceeded = true
+        accounts.forEachIndexed { index, account ->
+            onProgress(Progress(index, accounts.size, account.displayName))
+            if (runCatching { synchronize(account, includeFiles) }.isFailure) allSucceeded = false
+            onProgress(Progress(index + 1, accounts.size, null))
+        }
+        return allSucceeded
+    }
 
     suspend fun synchronize(storedAccount: DavAccountEntity, includeFiles: Boolean = true) {
         val account = storedAccount.copy(baseUrl = normalizeDavBaseUrl(storedAccount.baseUrl, storedAccount.kind))

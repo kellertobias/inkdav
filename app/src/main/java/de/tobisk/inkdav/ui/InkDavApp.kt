@@ -54,6 +54,7 @@ import de.tobisk.inkdav.R
 import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.settings.InkDavSettings
+import de.tobisk.inkdav.sync.ManualSyncState
 import de.tobisk.inkdav.tasks.ScheduleBucketer
 import de.tobisk.inkdav.update.InstallUpdateResult
 import de.tobisk.inkdav.update.UpdateInstaller
@@ -103,6 +104,7 @@ fun InkDavApp(model: MainViewModel) {
     val editingEvent by model.editingEvent.collectAsStateWithLifecycle()
     val editingOccurrence by model.editingOccurrence.collectAsStateWithLifecycle()
     val editingTask by model.editingTask.collectAsStateWithLifecycle()
+    val manualSyncState by model.manualSyncState.collectAsStateWithLifecycle()
 
     MaterialTheme(
         colorScheme = lightColorScheme(primary = Accent, onPrimary = Paper, background = Paper, surface = Paper, onSurface = Ink),
@@ -122,9 +124,9 @@ fun InkDavApp(model: MainViewModel) {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                 TopNavigation(destination) { model.destination.value = it }
                 if (destination == Destination.CALENDAR) {
-                    CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts)
+                    CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts, manualSyncState)
                 } else {
-                    AppHeader(destination.label, pending, accounts, model::sync)
+                    AppHeader(destination.label, pending, accounts, manualSyncState, model::sync)
                 }
                 Box(Modifier.fillMaxWidth().weight(1f, fill = true)) {
                     when (destination) {
@@ -145,6 +147,7 @@ fun InkDavApp(model: MainViewModel) {
                             pending,
                             conflictingEvents,
                             conflictingTasks,
+                            manualSyncState,
                             model::sync,
                             model::resolveEventConflict,
                             model::resolveTaskConflict
@@ -203,7 +206,13 @@ private fun TopNavigation(selected: Destination, select: (Destination) -> Unit) 
 }
 
 @Composable
-private fun AppHeader(title: String, pending: Int, accounts: List<DavAccountEntity>, sync: () -> Unit) {
+private fun AppHeader(
+    title: String,
+    pending: Int,
+    accounts: List<DavAccountEntity>,
+    syncState: ManualSyncState,
+    sync: () -> Unit
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 58.dp).border(1.dp, Rule).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -211,7 +220,9 @@ private fun AppHeader(title: String, pending: Int, accounts: List<DavAccountEnti
         Text(title, fontSize = 25.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
         Text(
-            if (accounts.isEmpty()) {
+            if (syncState.label != null) {
+                syncState.label
+            } else if (accounts.isEmpty()) {
                 "No account"
             } else if (pending >
                 0
@@ -220,10 +231,10 @@ private fun AppHeader(title: String, pending: Int, accounts: List<DavAccountEnti
             } else {
                 "Up to date"
             },
-            color = if (pending > 0) Warning else MutedInk
+            color = if (pending > 0 || syncState.label?.contains("failed", true) == true) Warning else MutedInk
         )
         Spacer(Modifier.width(12.dp))
-        InkButton("↻ Sync") { sync() }
+        InkButton(if (syncState.active) "↻ Syncing" else "↻ Sync", enabled = !syncState.active) { sync() }
     }
 }
 
@@ -235,7 +246,8 @@ private fun CalendarHeader(
     collections: List<DavCollectionEntity>,
     hiddenCalendarIds: Set<String>,
     pending: Int,
-    accounts: List<DavAccountEntity>
+    accounts: List<DavAccountEntity>,
+    syncState: ManualSyncState
 ) {
     var showViewMenu by remember { mutableStateOf(false) }
     var showCalendars by remember { mutableStateOf(false) }
@@ -249,7 +261,9 @@ private fun CalendarHeader(
             Text(date.format(DateTimeFormatter.ofPattern("MMMM")), fontSize = 26.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
             Text(date.year.toString(), fontSize = 15.sp, lineHeight = 16.sp, color = MutedInk, fontWeight = FontWeight.Medium)
         }
-        if (pending > 0) {
+        if (syncState.label != null) {
+            Text(syncState.label, color = if (syncState.label.contains("failed", true)) Warning else MutedInk, fontSize = 13.sp)
+        } else if (pending > 0) {
             Text("$pending waiting", color = Warning, fontSize = 13.sp)
         } else if (accounts.isNotEmpty()) {
             Text("Up to date", color = MutedInk, fontSize = 13.sp)
@@ -387,13 +401,19 @@ private fun CalendarVisibilityDialog(
 }
 
 @Composable
-private fun InkButton(label: String, selected: Boolean = false, modifier: Modifier = Modifier, action: () -> Unit) {
+private fun InkButton(
+    label: String,
+    selected: Boolean = false,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    action: () -> Unit
+) {
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier.heightIn(min = 48.dp)
             .border(if (selected) 2.dp else 1.dp, if (selected) Ink else Rule)
             .background(if (selected) Color(0xffe4e1d7) else Paper)
-            .clickable(interactionSource = interaction, indication = null, onClick = action)
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = action)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) { Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, maxLines = 1) }
@@ -1323,6 +1343,7 @@ private fun SyncScreen(
     pending: Int,
     conflictingEvents: List<CalendarEventEntity>,
     conflictingTasks: List<DavTaskEntity>,
+    syncState: ManualSyncState,
     sync: () -> Unit,
     resolveEvent: (CalendarEventEntity, Boolean) -> Unit,
     resolveTask: (DavTaskEntity, Boolean) -> Unit
@@ -1337,7 +1358,26 @@ private fun SyncScreen(
         item {
             Text("$pending local change${if (pending == 1) "" else "s"} waiting for upload. Reads always come from the local database.")
         }
-        item { InkButton("Sync now") { sync() } }
+        item {
+            InkButton(if (syncState.active) "Sync in progress" else "Sync now", enabled = !syncState.active) { sync() }
+        }
+        syncState.label?.let { label ->
+            item {
+                Column(
+                    Modifier.fillMaxWidth().border(2.dp, Ink).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(label, fontWeight = FontWeight.Bold)
+                    Box(Modifier.fillMaxWidth().height(14.dp).border(1.dp, Ink)) {
+                        Box(
+                            Modifier.fillMaxHeight()
+                                .fillMaxWidth(syncState.progress.coerceIn(0.03f, 1f))
+                                .background(if (label.contains("failed", true)) Warning else Accent)
+                        )
+                    }
+                }
+            }
+        }
         if (conflictingEvents.isNotEmpty() || conflictingTasks.isNotEmpty()) {
             item {
                 Text("Conflicts", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Warning)
