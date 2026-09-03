@@ -39,7 +39,7 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, Duration.ofMinutes(1))
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(ONE_TIME_NAME, ExistingWorkPolicy.KEEP, request)
+            WorkManager.getInstance(context).enqueueUniqueWork(ONE_TIME_NAME, MANUAL_SYNC_POLICY, request)
         }
 
         fun schedulePeriodic(context: Context) {
@@ -56,5 +56,7 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
         }
 
         private const val INCLUDE_FILES = "include-files"
+
+        internal val MANUAL_SYNC_POLICY = ExistingWorkPolicy.REPLACE
     }
 }
