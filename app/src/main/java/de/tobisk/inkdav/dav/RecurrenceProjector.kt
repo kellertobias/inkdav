@@ -2,7 +2,6 @@ package de.tobisk.inkdav.dav
 
 import de.tobisk.inkdav.data.CalendarOccurrenceEntity
 import de.tobisk.inkdav.data.SyncStatus
-import java.io.StringReader
 import java.time.*
 import java.time.temporal.Temporal
 import java.util.UUID
@@ -25,7 +24,9 @@ object RecurrenceProjector {
         displayZone: ZoneId,
         syncStatus: SyncStatus = SyncStatus.CLEAN
     ): List<CalendarOccurrenceEntity> {
-        val calendar = platformCalendarBuilder().build(StringReader(raw))
+        val calendar = runCatching { parsePlatformCalendar(raw) }.getOrElse {
+            return fallback(collectionId, href, raw, windowStartMillis, windowEndMillis, syncStatus)
+        }
         val components = calendar.componentList.getComponents<VEvent>("VEVENT")
         val result = linkedMapOf<String, CalendarOccurrenceEntity>()
         val masters = components.filter { it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).isEmpty }
@@ -66,6 +67,34 @@ object RecurrenceProjector {
         }
         return result.values.sortedBy(CalendarOccurrenceEntity::startEpochMillis)
     }
+
+    private fun fallback(
+        collectionId: String,
+        href: String?,
+        raw: String,
+        windowStartMillis: Long,
+        windowEndMillis: Long,
+        syncStatus: SyncStatus
+    ): List<CalendarOccurrenceEntity> = IcalendarCodec.parse(collectionId, href, null, raw).events
+        .filter { it.endEpochMillis > windowStartMillis && it.startEpochMillis < windowEndMillis }
+        .map { event ->
+            CalendarOccurrenceEntity(
+                id = UUID.nameUUIDFromBytes("$collectionId|${event.uid}|${event.startEpochMillis}".encodeToByteArray()).toString(),
+                sourceEventId = event.id,
+                collectionId = collectionId,
+                remoteHref = href,
+                uid = event.uid,
+                title = event.title,
+                description = event.description,
+                location = event.location,
+                startEpochMillis = event.startEpochMillis,
+                endEpochMillis = event.endEpochMillis,
+                originalStartEpochMillis = event.startEpochMillis,
+                allDay = event.allDay,
+                isException = event.recurrenceId != null,
+                status = syncStatus
+            )
+        }
 
     private fun applyThisAndFuture(
         result: MutableMap<String, CalendarOccurrenceEntity>,

@@ -1,8 +1,7 @@
 package de.tobisk.inkdav.tasks
 
 import de.tobisk.inkdav.data.DavTaskEntity
-import de.tobisk.inkdav.dav.platformCalendarBuilder
-import java.io.StringReader
+import de.tobisk.inkdav.dav.parsePlatformCalendar
 import java.time.*
 import java.time.temporal.Temporal
 import net.fortuna.ical4j.model.Property
@@ -17,7 +16,7 @@ object RecurringTaskProjector {
 
     fun next(task: DavTaskEntity, displayZone: ZoneId = ZoneId.systemDefault()): DavTaskEntity? {
         if (task.recurrenceRule == null || task.rawIcal == null) return task
-        val calendar = platformCalendarBuilder().build(StringReader(task.rawIcal))
+        val calendar = runCatching { parsePlatformCalendar(task.rawIcal) }.getOrElse { return task }
         val todos = calendar.componentList.getComponents<VToDo>("VTODO")
         val master = todos.firstOrNull { it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).isEmpty } ?: return task
         val seed = master.getDue<Temporal>().map { it.date }.orElseGet {
