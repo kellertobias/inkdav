@@ -1,3 +1,9 @@
+## [1.3.5](https://github.com/kellertobias/[secure]/compare/v1.3.4...v1.3.5) (2026-09-03)
+
+### Bug Fixes
+
+* restart manual sync after failures ([afac04e](https://github.com/kellertobias/[secure]/commit/afac04e91d5d339a39f3074bd3343cbda9058f3d))
+
 ## [1.3.4](https://github.com/kellertobias/[secure]/compare/v1.3.3...v1.3.4) (2026-09-02)
 
 ### Bug Fixes
