@@ -1,3 +1,10 @@
+## [1.3.6](https://github.com/kellertobias/[secure]/compare/v1.3.5...v1.3.6) (2026-09-03)
+
+### Bug Fixes
+
+* filter embedded calendar components ([814ed3c](https://github.com/kellertobias/[secure]/commit/814ed3c2c5e929719806c1957edb32ed32c02a02))
+* parse embedded timezones on Android ([3dd57fb](https://github.com/kellertobias/[secure]/commit/3dd57fbed97a12050d9c425de40817739b2ce158))
+
 ## [1.3.5](https://github.com/kellertobias/[secure]/compare/v1.3.4...v1.3.5) (2026-09-03)
 
 ### Bug Fixes
