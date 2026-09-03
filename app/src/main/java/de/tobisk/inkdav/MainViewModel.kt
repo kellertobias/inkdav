@@ -494,6 +494,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setEink(bold: Boolean, pages: Boolean) = viewModelScope.launch { container.preferences.setEink(bold, pages) }
     fun setCalendarVisible(collectionId: String, visible: Boolean) = viewModelScope.launch { container.preferences.setCalendarVisible(collectionId, visible) }
+    fun setFileFolderHidden(folderKey: String, hidden: Boolean) = viewModelScope.launch {
+        container.preferences.setFileFolderHidden(folderKey, hidden)
+    }
 
     private fun visibleInterval(date: LocalDate, mode: CalendarMode): Pair<Long, Long> {
         val zone = ZoneId.systemDefault()

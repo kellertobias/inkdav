@@ -21,6 +21,7 @@ data class InkDavSettings(
     val boldText: Boolean = true,
     val pageNavigation: Boolean = true,
     val hiddenCalendarIds: Set<String> = emptySet(),
+    val hiddenFileFolderKeys: Set<String> = emptySet(),
     val localFilesRootUri: String? = null
 )
 
@@ -34,6 +35,7 @@ class UserPreferences(private val context: Context) {
         val boldText = booleanPreferencesKey("bold_text")
         val pageNavigation = booleanPreferencesKey("page_navigation")
         val hiddenCalendarIds = stringSetPreferencesKey("hidden_calendar_ids")
+        val hiddenFileFolderKeys = stringSetPreferencesKey("hidden_file_folder_keys")
         val localFilesRootUri = stringPreferencesKey("local_files_root_uri")
     }
 
@@ -47,6 +49,7 @@ class UserPreferences(private val context: Context) {
             boldText = value[Keys.boldText] ?: true,
             pageNavigation = value[Keys.pageNavigation] ?: true,
             hiddenCalendarIds = value[Keys.hiddenCalendarIds] ?: emptySet(),
+            hiddenFileFolderKeys = value[Keys.hiddenFileFolderKeys] ?: emptySet(),
             localFilesRootUri = value[Keys.localFilesRootUri]
         )
     }
@@ -71,6 +74,12 @@ class UserPreferences(private val context: Context) {
         val hidden = (it[Keys.hiddenCalendarIds] ?: emptySet()).toMutableSet()
         if (visible) hidden.remove(collectionId) else hidden.add(collectionId)
         it[Keys.hiddenCalendarIds] = hidden
+    }
+
+    suspend fun setFileFolderHidden(folderKey: String, hidden: Boolean) = context.dataStore.edit {
+        val hiddenFolders = (it[Keys.hiddenFileFolderKeys] ?: emptySet()).toMutableSet()
+        if (hidden) hiddenFolders.add(folderKey) else hiddenFolders.remove(folderKey)
+        it[Keys.hiddenFileFolderKeys] = hiddenFolders
     }
 
     suspend fun setLocalFilesRoot(uri: String?) = context.dataStore.edit {

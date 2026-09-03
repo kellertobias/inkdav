@@ -1111,6 +1111,7 @@ private fun FilesScreen(
     collections: List<DavCollectionEntity>,
     settings: InkDavSettings
 ) {
+    var showHiddenFolders by rememberSaveable { mutableStateOf(false) }
     val roots = collections.filter { it.kind == CollectionKind.FILE_ROOT || it.kind == CollectionKind.SHARE }
     val selectedCollection by model.selectedFileCollection.collectAsStateWithLifecycle()
     val selectedParent by model.selectedFileParent.collectAsStateWithLifecycle()
@@ -1155,6 +1156,11 @@ private fun FilesScreen(
             Spacer(Modifier.height(8.dp))
             Text("Offline folders", modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(14.dp))
             Text("Transfers & conflicts", modifier = Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(14.dp))
+            Box(Modifier.padding(8.dp)) {
+                InkButton(if (showHiddenFolders) "Hide hidden folders" else "Show hidden folders") {
+                    showHiddenFolders = !showHiddenFolders
+                }
+            }
             if (selectedCollection != null &&
                 selectedParent != null
             ) {
@@ -1185,7 +1191,19 @@ private fun FilesScreen(
                         Text("Local", color = MutedInk)
                     }
                 }
-                items(mirrorFiles, key = MirrorEntryEntity::id) { entry ->
+                items(
+                    mirrorFiles.filter { entry ->
+                        isFileFolderVisible(
+                            entry.isDirectory,
+                            mirrorFolderVisibilityKey(entry.id),
+                            settings.hiddenFileFolderKeys,
+                            showHiddenFolders
+                        )
+                    },
+                    key = MirrorEntryEntity::id
+                ) { entry ->
+                    val folderKey = mirrorFolderVisibilityKey(entry.id)
+                    val hidden = folderKey in settings.hiddenFileFolderKeys
                     Row(
                         Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
                             if (entry.isDirectory) {
@@ -1198,8 +1216,18 @@ private fun FilesScreen(
                     ) {
                         Text(if (entry.isDirectory) "□" else "▧", fontSize = 22.sp)
                         Spacer(Modifier.width(10.dp))
-                        Text(entry.relativePath.substringAfterLast('/'), Modifier.weight(1f), fontSize = 17.sp)
+                        Text(
+                            entry.relativePath.substringAfterLast('/') + if (hidden) " (hidden)" else "",
+                            Modifier.weight(1f),
+                            fontSize = 17.sp
+                        )
                         if (entry.status != MirrorEntryStatus.CLEAN) Text(entry.status.name.lowercase(), color = Warning)
+                        if (entry.isDirectory) {
+                            Spacer(Modifier.width(8.dp))
+                            InkButton(if (hidden) "Show" else "Hide") {
+                                model.setFileFolderHidden(folderKey, !hidden)
+                            }
+                        }
                     }
                 }
             }
@@ -1212,7 +1240,19 @@ private fun FilesScreen(
                         Text("Size", Modifier.width(90.dp), fontWeight = FontWeight.Bold)
                     }
                 }
-                items(files, key = FileNodeEntity::id) { file ->
+                items(
+                    files.filter { file ->
+                        isFileFolderVisible(
+                            file.isDirectory,
+                            remoteFolderVisibilityKey(file.id),
+                            settings.hiddenFileFolderKeys,
+                            showHiddenFolders
+                        )
+                    },
+                    key = FileNodeEntity::id
+                ) { file ->
+                    val folderKey = remoteFolderVisibilityKey(file.id)
+                    val hidden = folderKey in settings.hiddenFileFolderKeys
                     Row(
                         Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
                             if (file.isDirectory) model.openFolder(file.href) else model.openFile(file)
@@ -1222,7 +1262,7 @@ private fun FilesScreen(
                         Text(if (file.isDirectory) "□" else "▧", fontSize = 22.sp)
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            file.displayName,
+                            file.displayName + if (hidden) " (hidden)" else "",
                             Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1239,6 +1279,12 @@ private fun FilesScreen(
                         Text(file.sizeBytes?.let(::formatBytes).orEmpty(), Modifier.width(90.dp))
                         SyncMark(file.status)
                         Spacer(Modifier.width(8.dp))
+                        if (file.isDirectory) {
+                            InkButton(if (hidden) "Show" else "Hide") {
+                                model.setFileFolderHidden(folderKey, !hidden)
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
                         InkButton(
                             if (file.offlinePolicy ==
                                 OfflinePolicy.ONLINE_ONLY
@@ -1252,19 +1298,32 @@ private fun FilesScreen(
                 }
             }
         } else {
-            LocalFilesPane(model, settings, Modifier.weight(1f).fillMaxHeight())
+            LocalFilesPane(model, settings, showHiddenFolders, Modifier.weight(1f).fillMaxHeight())
         }
     }
 }
 
 @Composable
-private fun LocalFilesPane(model: MainViewModel, settings: InkDavSettings, modifier: Modifier = Modifier) {
+private fun LocalFilesPane(
+    model: MainViewModel,
+    settings: InkDavSettings,
+    showHiddenFolders: Boolean,
+    modifier: Modifier = Modifier
+) {
     val entries by model.localFiles.collectAsStateWithLifecycle()
     val stack by model.localFolderStack.collectAsStateWithLifecycle()
     val error by model.localFilesError.collectAsStateWithLifecycle()
     var preview by remember { mutableStateOf<LocalFileEntry?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(model::setLocalFilesRoot)
+    }
+    val visibleEntries = entries.filter { entry ->
+        isFileFolderVisible(
+            entry.isDirectory,
+            localFolderVisibilityKey(entry.uri),
+            settings.hiddenFileFolderKeys,
+            showHiddenFolders
+        )
     }
     Column(modifier.border(2.dp, Ink)) {
         Row(
@@ -1293,11 +1352,21 @@ private fun LocalFilesPane(model: MainViewModel, settings: InkDavSettings, modif
                 "Android requires you to authorize the folder InkDAV may browse. Files outside DAV mirrors will then appear here.",
                 Modifier.weight(1f)
             )
-        } else if (entries.isEmpty()) {
-            EmptyState("This folder is empty", "There are no visible files in this folder.", Modifier.weight(1f))
+        } else if (visibleEntries.isEmpty()) {
+            EmptyState(
+                if (entries.isEmpty()) "This folder is empty" else "All folders are hidden",
+                if (entries.isEmpty()) {
+                    "There are no visible files in this folder."
+                } else {
+                    "Use Show hidden folders in the Sources panel to restore one."
+                },
+                Modifier.weight(1f)
+            )
         } else {
             LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                items(entries, key = LocalFileEntry::uri) { entry ->
+                items(visibleEntries, key = LocalFileEntry::uri) { entry ->
+                    val folderKey = localFolderVisibilityKey(entry.uri)
+                    val hidden = folderKey in settings.hiddenFileFolderKeys
                     Row(
                         Modifier.fillMaxWidth().heightIn(min = 66.dp).border(1.dp, Ink).padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1317,7 +1386,7 @@ private fun LocalFilesPane(model: MainViewModel, settings: InkDavSettings, modif
                             }
                         ) {
                             Text(
-                                entry.name,
+                                entry.name + if (hidden) " (hidden)" else "",
                                 fontSize = 17.sp,
                                 fontWeight = if (entry.isDirectory) FontWeight.Bold else FontWeight.Medium,
                                 maxLines = 1,
@@ -1329,6 +1398,10 @@ private fun LocalFilesPane(model: MainViewModel, settings: InkDavSettings, modif
                             }
                         }
                         if (entry.isDirectory) {
+                            InkButton(if (hidden) "Show" else "Hide") {
+                                model.setFileFolderHidden(folderKey, !hidden)
+                            }
+                            Spacer(Modifier.width(6.dp))
                             InkButton("Open", modifier = Modifier.width(88.dp)) { model.openLocalFolder(entry) }
                         } else {
                             if (canPreview(entry)) {
@@ -1352,6 +1425,17 @@ private fun LocalFilesPane(model: MainViewModel, settings: InkDavSettings, modif
         )
     }
 }
+
+internal fun localFolderVisibilityKey(uri: String) = "local:$uri"
+internal fun remoteFolderVisibilityKey(id: String) = "remote:$id"
+internal fun mirrorFolderVisibilityKey(id: String) = "mirror:$id"
+
+internal fun isFileFolderVisible(
+    isDirectory: Boolean,
+    key: String,
+    hiddenKeys: Set<String>,
+    showHidden: Boolean
+): Boolean = !isDirectory || showHidden || key !in hiddenKeys
 
 private fun localFileIcon(entry: LocalFileEntry): Int = when {
     entry.isDirectory -> R.drawable.ic_file_folder
