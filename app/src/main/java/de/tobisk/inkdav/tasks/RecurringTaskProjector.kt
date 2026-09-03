@@ -18,7 +18,7 @@ object RecurringTaskProjector {
     fun next(task: DavTaskEntity, displayZone: ZoneId = ZoneId.systemDefault()): DavTaskEntity? {
         if (task.recurrenceRule == null || task.rawIcal == null) return task
         val calendar = platformCalendarBuilder().build(StringReader(task.rawIcal))
-        val todos = calendar.getComponents<VToDo>()
+        val todos = calendar.componentList.getComponents<VToDo>("VTODO")
         val master = todos.firstOrNull { it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).isEmpty } ?: return task
         val seed = master.getDue<Temporal>().map { it.date }.orElseGet {
             master.getStartDate<Temporal>().map { it.date }.orElse(null)

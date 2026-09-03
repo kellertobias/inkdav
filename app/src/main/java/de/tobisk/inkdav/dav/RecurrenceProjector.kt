@@ -26,7 +26,7 @@ object RecurrenceProjector {
         syncStatus: SyncStatus = SyncStatus.CLEAN
     ): List<CalendarOccurrenceEntity> {
         val calendar = platformCalendarBuilder().build(StringReader(raw))
-        val components = calendar.getComponents<VEvent>()
+        val components = calendar.componentList.getComponents<VEvent>("VEVENT")
         val result = linkedMapOf<String, CalendarOccurrenceEntity>()
         val masters = components.filter { it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).isEmpty }
         val exceptions = components.filter { it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).isPresent }
