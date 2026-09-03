@@ -1,3 +1,9 @@
+## [1.3.7](https://github.com/kellertobias/[secure]/compare/v1.3.6...v1.3.7) (2026-09-03)
+
+### Bug Fixes
+
+* tolerate malformed calendar parameters ([194e0e9](https://github.com/kellertobias/[secure]/commit/194e0e95dda30368ae76f05a90621631f49babdd))
+
 ## [1.3.6](https://github.com/kellertobias/[secure]/compare/v1.3.5...v1.3.6) (2026-09-03)
 
 ### Bug Fixes
