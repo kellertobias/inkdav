@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,6 +37,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -997,13 +999,15 @@ private fun InlineTaskCreator(
         OutlinedTextField(
             title,
             { title = it },
-            modifier = Modifier.weight(1f),
-            label = { Text("Add a task") },
+            modifier = Modifier.weight(1f).height(52.dp),
+            placeholder = { Text("Add a task") },
             singleLine = true
         )
         if (selectedList == null) {
             Box {
-                InkButton(targetList.displayName, modifier = Modifier.widthIn(min = 150.dp)) { showLists = true }
+                InkButton("${targetList.displayName}  ⌄", modifier = Modifier.widthIn(min = 150.dp).height(52.dp)) {
+                    showLists = true
+                }
                 DropdownMenu(
                     expanded = showLists,
                     onDismissRequest = { showLists = false },
@@ -1023,7 +1027,7 @@ private fun InlineTaskCreator(
                 }
             }
         }
-        InkButton("+ Add", modifier = Modifier.width(96.dp)) {
+        InkButton("+ Add", modifier = Modifier.width(96.dp).height(52.dp)) {
             if (title.isNotBlank()) {
                 create(targetList.id, title)
                 title = ""
@@ -1043,7 +1047,7 @@ private fun TaskRow(
     Row(Modifier.fillMaxWidth().border(0.5.dp, Rule).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.width(6.dp).height(44.dp).background(collectionColor))
         Spacer(Modifier.width(8.dp))
-        InkButton(if (task.completedAt == null) "□" else "✓", task.completedAt != null, Modifier.width(52.dp)) { toggle(task) }
+        TaskCheckbox(task.completedAt != null, collectionColor, task.title) { toggle(task) }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(task.title, fontSize = 18.sp, fontWeight = FontWeight.Medium)
@@ -1064,6 +1068,31 @@ private fun TaskRow(
         SyncMark(task.status)
         Spacer(Modifier.width(8.dp))
         HeaderIconButton("✎", "Edit ${task.title}") { edit(task) }
+    }
+}
+
+@Composable
+private fun TaskCheckbox(checked: Boolean, color: Color, taskTitle: String, toggle: () -> Unit) {
+    Box(
+        Modifier.size(48.dp).noRippleClick(toggle).semantics {
+            contentDescription = if (checked) "Mark $taskTitle incomplete" else "Mark $taskTitle completed"
+        },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier.size(32.dp).background(color, CircleShape).border(2.dp, Ink, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (checked) {
+                Text(
+                    "✓",
+                    color = if (color.luminance() < 0.45f) Color.White else Ink,
+                    fontSize = 22.sp,
+                    lineHeight = 22.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
     }
 }
 
