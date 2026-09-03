@@ -65,6 +65,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val localFolderStack = MutableStateFlow<List<LocalFolderLocation>>(emptyList())
     val localFilesError = MutableStateFlow<String?>(null)
     val updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val accountOperationError = MutableStateFlow<String?>(null)
     val manualSyncState = MutableStateFlow(ManualSyncState())
     private var syncObservation: Job? = null
 
@@ -204,6 +205,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             container.credentials.put(account.id, password)
             dao.upsertAccount(account.copy(lastSyncError = null))
             sync()
+        }
+    }
+
+    fun copyAccount(source: DavAccountEntity, name: String, baseUrl: String) {
+        viewModelScope.launch {
+            accountOperationError.value = null
+            val password = container.credentials.get(source.id)
+            if (password == null) {
+                accountOperationError.value = "The stored credential for ${source.displayName} is unavailable."
+                return@launch
+            }
+            val copy = source.copyForEndpoint(UUID.randomUUID().toString(), name, baseUrl)
+            runCatching {
+                container.credentials.put(copy.id, password)
+                dao.upsertAccount(copy)
+            }.onSuccess {
+                WidgetUpdater.updateAll(getApplication())
+                sync()
+            }.onFailure { error ->
+                password.fill('\u0000')
+                container.credentials.remove(copy.id)
+                accountOperationError.value = error.message ?: "The account could not be copied."
+            }
         }
     }
 
@@ -487,3 +511,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 private const val MINIMUM_SYNC_FEEDBACK_MILLIS = 900L
+
+internal fun DavAccountEntity.copyForEndpoint(id: String, name: String, baseUrl: String) = copy(
+    id = id,
+    displayName = name.trim(),
+    baseUrl = normalizeDavBaseUrl(baseUrl, kind),
+    enabled = true,
+    lastSyncAt = null,
+    lastSyncError = null
+)

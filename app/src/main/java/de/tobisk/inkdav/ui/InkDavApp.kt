@@ -1460,8 +1460,10 @@ private fun ConflictRow(title: String, useServer: () -> Unit, keepBoth: () -> Un
 private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity>, settings: InkDavSettings) {
     var showAccount by remember { mutableStateOf(false) }
     var credentialAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
+    var copyAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     var removalAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     val updateState by model.updateState.collectAsStateWithLifecycle()
+    val accountOperationError by model.accountOperationError.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val installedVersion = remember { model.currentAppVersion() }
     val localRootPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -1513,11 +1515,13 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 Text("${account.kind.name} · ${account.username}", color = MutedInk)
                 Text(account.baseUrl, color = MutedInk)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InkButton("Copy account") { copyAccount = account }
                     InkButton("Change secret") { credentialAccount = account }
                     InkButton("Remove account") { removalAccount = account }
                 }
             }
         }
+        accountOperationError?.let { Text(it, modifier = Modifier.fillMaxWidth().border(2.dp, Warning).padding(10.dp), color = Warning) }
         SettingPanel("Calendar cache") {
             Text(
                 "Download ${settings.calendarPastDays} days in the past and ${settings.calendarFutureMonths} months ahead. Recurrence masters are retained."
@@ -1604,6 +1608,12 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
         }
     }
     if (showAccount) AccountEditor({ showAccount = false }, model::addAccount)
+    copyAccount?.let { account ->
+        CopyAccountEditor(account, { copyAccount = null }) { name, url ->
+            model.copyAccount(account, name, url)
+            copyAccount = null
+        }
+    }
     credentialAccount?.let { account ->
         PasswordEditor(
             account,
@@ -1627,6 +1637,35 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
             dismissButton = { InkButton("Cancel") { removalAccount = null } }
         )
     }
+}
+
+@Composable
+private fun CopyAccountEditor(source: DavAccountEntity, close: () -> Unit, save: (String, String) -> Unit) {
+    var name by remember(source.id) { mutableStateOf("${source.displayName} copy") }
+    var url by remember(source.id) { mutableStateOf(source.baseUrl) }
+    InkAlertDialog(
+        onDismissRequest = close,
+        title = { Text("Copy DAV account") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("The username and stored credential will be reused without displaying the secret.", color = MutedInk)
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Name") })
+                OutlinedTextField(
+                    url,
+                    { url = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("New CalDAV/WebDAV URL") }
+                )
+                Text("${source.kind.name} · ${source.username}", color = MutedInk)
+            }
+        },
+        confirmButton = {
+            InkButton("Create copy") {
+                if (name.isNotBlank() && url.startsWith("https://")) save(name, url)
+            }
+        },
+        dismissButton = { InkButton("Cancel", action = close) }
+    )
 }
 
 @Composable
