@@ -41,8 +41,9 @@ class LocalFileBrowser(private val context: Context) {
         LocalFolderLocation(relativePath, name) to list(document, relativePath)
     }
 
-    private fun list(folder: DocumentFile, parentPath: String): List<LocalFileEntry> = folder.listFiles().map { document ->
+    private fun list(folder: DocumentFile, parentPath: String): List<LocalFileEntry> = folder.listFiles().mapNotNull { document ->
         val name = document.name ?: "Unnamed"
+        if (isDotFileName(name)) return@mapNotNull null
         LocalFileEntry(
             uri = document.uri.toString(),
             relativePath = if (parentPath.isBlank()) name else "$parentPath/$name",
@@ -68,7 +69,8 @@ class LocalFileBrowser(private val context: Context) {
         return LocalFolderLocation(relativePath, name) to list(folder, relativePath)
     }
 
-    private fun list(folder: File, parentPath: String): List<LocalFileEntry> = folder.listFiles().orEmpty().map { file ->
+    private fun list(folder: File, parentPath: String): List<LocalFileEntry> = folder.listFiles().orEmpty().mapNotNull { file ->
+        if (isDotFileName(file.name)) return@mapNotNull null
         val relativePath = if (parentPath.isBlank()) file.name else "$parentPath/${file.name}"
         LocalFileEntry(
             uri = Uri.fromFile(file).toString(),

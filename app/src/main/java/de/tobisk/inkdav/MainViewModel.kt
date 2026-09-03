@@ -15,6 +15,8 @@ import de.tobisk.inkdav.dav.normalizeDavBaseUrl
 import de.tobisk.inkdav.files.LocalFileBrowser
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.files.LocalFolderLocation
+import de.tobisk.inkdav.files.isDotFileName
+import de.tobisk.inkdav.files.isDotPath
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.ManualSyncState
 import de.tobisk.inkdav.sync.SyncWorker
@@ -97,12 +99,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val files = combine(selectedFileCollection, selectedFileParent) { collection, parent -> collection to parent }
         .flatMapLatest { (collection, parent) ->
-            if (collection == null) flowOf(emptyList()) else dao.observeFiles(collection, parent)
+            if (collection == null) {
+                flowOf(emptyList())
+            } else {
+                dao.observeFiles(collection, parent).map { entries -> entries.filterNot { isDotFileName(it.displayName) } }
+            }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val mirrorFiles = combine(selectedMirror, selectedMirrorParent) { mirror, parent -> mirror to parent }
         .flatMapLatest { (mirror, parent) ->
-            if (mirror == null) flowOf(emptyList()) else dao.observeMirrorChildren(mirror, parent)
+            if (mirror == null) {
+                flowOf(emptyList())
+            } else {
+                dao.observeMirrorChildren(mirror, parent).map { entries -> entries.filterNot { isDotPath(it.relativePath) } }
+            }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun sync() {

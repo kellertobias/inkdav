@@ -66,7 +66,9 @@ class InkDavDocumentsProvider : DocumentsProvider() {
             val parent = requireFile(parentDocumentId)
             parent.collectionId to parent.href
         }
-        runBlocking { dao.files(collectionId, parentHref) }.forEach { includeFile(cursor, it) }
+        runBlocking { dao.files(collectionId, parentHref) }
+            .filterNot { isDotFileName(it.displayName) }
+            .forEach { includeFile(cursor, it) }
         return cursor
     }
 
@@ -79,6 +81,7 @@ class InkDavDocumentsProvider : DocumentsProvider() {
         while (queue.isNotEmpty() && visited < 5_000) {
             val parent = queue.removeFirst()
             runBlocking { dao.files(root.id, parent) }.forEach { file ->
+                if (isDotFileName(file.displayName)) return@forEach
                 visited++
                 if (file.displayName.contains(query, ignoreCase = true)) includeFile(cursor, file)
                 if (file.isDirectory) queue.addLast(file.href)
