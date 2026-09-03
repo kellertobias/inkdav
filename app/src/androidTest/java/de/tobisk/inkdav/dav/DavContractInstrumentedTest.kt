@@ -3,6 +3,7 @@ package de.tobisk.inkdav.dav
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.tobisk.inkdav.data.DavAccountEntity
 import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -77,5 +78,47 @@ class DavContractInstrumentedTest {
             assertEquals("F", request.headers["Overwrite"])
             assertEquals("\"etag\"", request.headers["If-Match"])
         }
+    }
+
+    @Test
+    fun recurrenceWithEmbeddedTimezoneParsesOnAndroid() {
+        val raw = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//InkDAV Android contract//EN
+BEGIN:VTIMEZONE
+TZID:Europe/Berlin
+BEGIN:STANDARD
+DTSTART:20251026T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:20250330T020000
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:android-timezone
+DTSTART;TZID=Europe/Berlin:20260903T090000
+DTEND;TZID=Europe/Berlin:20260903T100000
+RRULE:FREQ=DAILY;COUNT=2
+SUMMARY:Android timezone
+END:VEVENT
+END:VCALENDAR"""
+
+        val occurrences = RecurrenceProjector.project(
+            "calendar",
+            "/calendar/android-timezone.ics",
+            raw,
+            Instant.parse("2026-09-03T00:00:00Z").toEpochMilli(),
+            Instant.parse("2026-09-06T00:00:00Z").toEpochMilli(),
+            ZoneId.of("Europe/Berlin")
+        )
+
+        assertEquals(2, occurrences.size)
+        assertEquals(Instant.parse("2026-09-03T07:00:00Z").toEpochMilli(), occurrences.first().startEpochMillis)
     }
 }

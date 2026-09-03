@@ -6,7 +6,6 @@ import java.io.StringReader
 import java.time.*
 import java.time.temporal.Temporal
 import java.util.UUID
-import net.fortuna.ical4j.data.CalendarBuilder
 import net.fortuna.ical4j.model.Period
 import net.fortuna.ical4j.model.Property
 import net.fortuna.ical4j.model.component.VEvent
@@ -26,7 +25,7 @@ object RecurrenceProjector {
         displayZone: ZoneId,
         syncStatus: SyncStatus = SyncStatus.CLEAN
     ): List<CalendarOccurrenceEntity> {
-        val calendar = CalendarBuilder().build(StringReader(raw))
+        val calendar = platformCalendarBuilder().build(StringReader(raw))
         val components = calendar.getComponents<VEvent>()
         val result = linkedMapOf<String, CalendarOccurrenceEntity>()
         val masters = components.filter { it.getProperty<RecurrenceId<*>>(Property.RECURRENCE_ID).isEmpty }
