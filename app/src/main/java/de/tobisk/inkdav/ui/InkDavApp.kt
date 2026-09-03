@@ -509,16 +509,53 @@ private fun MonthView(
                         }
                         dayEvents.take(4).forEach { event ->
                             val collection = collectionMap[event.collectionId]
-                            Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(2.dp, 12.dp).background(collection?.colorArgb?.let(::Color) ?: Accent))
-                                Spacer(Modifier.width(3.dp))
-                                Text(event.title.ifBlank { "(Untitled)" }, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
+                            MonthEventRow(event, collection?.colorArgb?.let(::Color) ?: Accent)
                         }
                         if (dayEvents.size > 4) Text("+${dayEvents.size - 4} more", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MonthEventRow(event: CalendarOccurrenceEntity, eventColor: Color) {
+    if (event.allDay) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 2.dp).background(eventColor).padding(horizontal = 3.dp, vertical = 1.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                event.title.ifBlank { "(Untitled)" },
+                modifier = Modifier.weight(1f),
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    } else {
+        val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault())
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(2.dp, 12.dp).background(eventColor))
+            Spacer(Modifier.width(3.dp))
+            Text(
+                event.title.ifBlank { "(Untitled)" },
+                modifier = Modifier.weight(1f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(3.dp))
+            Text(
+                start.format(DateTimeFormatter.ofPattern("HH:mm")),
+                color = MutedInk,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
         }
     }
 }
