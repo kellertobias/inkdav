@@ -15,6 +15,8 @@ private val Context.dataStore by preferencesDataStore(name = "inkdav_settings")
 data class InkDavSettings(
     val calendarPastDays: Int = 180,
     val calendarFutureMonths: Int = 36,
+    val landscapeWeekStartHour: Int = 8,
+    val landscapeWeekEndHour: Int = 24,
     val wifiOnlyFiles: Boolean = true,
     val boldText: Boolean = true,
     val pageNavigation: Boolean = true,
@@ -26,6 +28,8 @@ class UserPreferences(private val context: Context) {
     private object Keys {
         val pastDays = intPreferencesKey("calendar_past_days")
         val futureMonths = intPreferencesKey("calendar_future_months")
+        val landscapeWeekStartHour = intPreferencesKey("landscape_week_start_hour")
+        val landscapeWeekEndHour = intPreferencesKey("landscape_week_end_hour")
         val wifiOnlyFiles = booleanPreferencesKey("wifi_only_files")
         val boldText = booleanPreferencesKey("bold_text")
         val pageNavigation = booleanPreferencesKey("page_navigation")
@@ -37,6 +41,8 @@ class UserPreferences(private val context: Context) {
         InkDavSettings(
             calendarPastDays = value[Keys.pastDays] ?: 180,
             calendarFutureMonths = value[Keys.futureMonths] ?: 36,
+            landscapeWeekStartHour = value[Keys.landscapeWeekStartHour] ?: 8,
+            landscapeWeekEndHour = value[Keys.landscapeWeekEndHour] ?: 24,
             wifiOnlyFiles = value[Keys.wifiOnlyFiles] ?: true,
             boldText = value[Keys.boldText] ?: true,
             pageNavigation = value[Keys.pageNavigation] ?: true,
@@ -48,6 +54,12 @@ class UserPreferences(private val context: Context) {
     suspend fun setCalendarWindow(pastDays: Int, futureMonths: Int) = context.dataStore.edit {
         it[Keys.pastDays] = pastDays.coerceIn(0, 3650)
         it[Keys.futureMonths] = futureMonths.coerceIn(1, 120)
+    }
+
+    suspend fun setLandscapeWeekHours(startHour: Int, endHour: Int) = context.dataStore.edit {
+        val start = startHour.coerceIn(0, 23)
+        it[Keys.landscapeWeekStartHour] = start
+        it[Keys.landscapeWeekEndHour] = endHour.coerceIn(start + 1, 24)
     }
 
     suspend fun setEink(bold: Boolean, pages: Boolean) = context.dataStore.edit {

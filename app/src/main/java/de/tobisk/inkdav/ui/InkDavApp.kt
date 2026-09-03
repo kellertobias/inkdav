@@ -25,7 +25,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -138,7 +138,8 @@ fun InkDavApp(model: MainViewModel) {
                                 it.collectionId in
                                     settings.hiddenCalendarIds
                             },
-                            collections
+                            collections,
+                            settings
                         )
                         Destination.TASKS -> TasksScreen(model, scheduledTasks, tasks, collections)
                         Destination.FILES -> FilesScreen(model, files, mirrorFiles, collections, settings)
@@ -427,14 +428,15 @@ private fun CalendarScreen(
     date: LocalDate,
     mode: CalendarMode,
     events: List<CalendarOccurrenceEntity>,
-    collections: List<DavCollectionEntity>
+    collections: List<DavCollectionEntity>,
+    settings: InkDavSettings
 ) {
     var addDate by remember { mutableStateOf<LocalDate?>(null) }
     Box(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
         when (mode) {
             CalendarMode.MONTH -> MonthView(date, events, collections, model) { addDate = it }
             CalendarMode.YEAR -> YearView(date, events, model)
-            CalendarMode.WEEK -> WeekView(date, events, collections, model) { addDate = it }
+            CalendarMode.WEEK -> WeekView(date, events, collections, settings, model) { addDate = it }
             CalendarMode.DAY -> DayView(date, events, collections, model) { addDate = it }
         }
     }
@@ -638,6 +640,7 @@ private fun WeekView(
     date: LocalDate,
     events: List<CalendarOccurrenceEntity>,
     collections: List<DavCollectionEntity>,
+    settings: InkDavSettings,
     model: MainViewModel,
     addEvent: (LocalDate) -> Unit
 ) {
@@ -645,18 +648,18 @@ private fun WeekView(
     val days = remember(date, isPortrait) { displayedWeekDays(date, isPortrait) }
     val collectionMap = remember(collections) { collections.associateBy(DavCollectionEntity::id) }
     val allDayByDate = remember(events) {
-        events.filter(CalendarOccurrenceEntity::allDay).groupBy { eventDate(it.startEpochMillis) }
+        events.filter(CalendarOccurrenceEntity::allDay)
+            .groupBy { eventDate(it.startEpochMillis) }
+            .mapValues { (_, occurrences) -> occurrences.sortedBy(CalendarOccurrenceEntity::title) }
     }
-    val timedBySlot = remember(events) {
-        events.filterNot(CalendarOccurrenceEntity::allDay).groupBy { occurrence ->
-            val start = Instant.ofEpochMilli(occurrence.startEpochMillis).atZone(ZoneId.systemDefault())
-            start.toLocalDate() to start.hour
-        }
-    }
-    var now by remember { mutableStateOf(ZonedDateTime.now()) }
-    val hourListState = rememberLazyListState(
-        initialFirstVisibleItemIndex = if (now.toLocalDate() in days) (now.hour - 1).coerceAtLeast(0) else 7
+    val timedEvents = remember(events) { events.filterNot(CalendarOccurrenceEntity::allDay) }
+    val allDayHeaderHeight = weekAllDayHeaderHeightDp(days.maxOf { allDayByDate[it].orEmpty().size }).dp
+    val visibleHours = visibleWeekHours(
+        isPortrait,
+        settings.landscapeWeekStartHour,
+        settings.landscapeWeekEndHour
     )
+    var now by remember { mutableStateOf(ZonedDateTime.now()) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(60_000)
@@ -664,7 +667,7 @@ private fun WeekView(
         }
     }
     Column(Modifier.fillMaxSize().border(2.dp, Ink)) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 62.dp)) {
+        Row(Modifier.fillMaxWidth().height(allDayHeaderHeight)) {
             Box(Modifier.width(62.dp).fillMaxHeight().border(1.dp, Ink), contentAlignment = Alignment.BottomCenter) {
                 Text("TIME", fontSize = 10.sp, color = MutedInk, modifier = Modifier.padding(bottom = 5.dp))
             }
@@ -678,56 +681,123 @@ private fun WeekView(
                         Text(day.format(DateTimeFormatter.ofPattern("EEE d")), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         DayAddButton("Add event on ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}") { addEvent(day) }
                     }
-                    Text(
-                        allDayEvents.joinToString(" · ") { it.title.ifBlank { "(Untitled)" } },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontSize = 10.sp
-                    )
+                    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+                        allDayEvents.forEach { event ->
+                            val eventColor = collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Accent
+                            Text(
+                                event.title.ifBlank { "(Untitled)" },
+                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp).background(eventColor)
+                                    .noRippleClick { model.openOccurrence(event) }.padding(horizontal = 4.dp, vertical = 2.dp),
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 10.sp,
+                                lineHeight = 12.sp
+                            )
+                        }
+                    }
                 }
             }
         }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f), state = hourListState) {
-            items((0..23).toList()) { hour ->
-                Row(Modifier.fillMaxWidth().height(72.dp).border(1.dp, Ink)) {
-                    Box(Modifier.width(62.dp).fillMaxHeight().border(1.dp, Ink), contentAlignment = Alignment.TopCenter) {
-                        Text("%02d:00".format(hour), fontSize = 11.sp, color = MutedInk, modifier = Modifier.padding(top = 3.dp))
-                    }
-                    days.forEach { day ->
-                        val timedEvents = timedBySlot[day to hour].orEmpty()
-                        Box(Modifier.weight(1f).fillMaxHeight().border(1.dp, Ink)) {
-                            Box(Modifier.align(Alignment.Center).fillMaxWidth().height(1.dp).background(Rule))
-                            Column(Modifier.fillMaxSize().padding(3.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                timedEvents.forEach { event ->
-                                    val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(ZoneId.systemDefault())
-                                    Text(
-                                        "${start.format(DateTimeFormatter.ofPattern("HH:mm"))} ${event.title.ifBlank { "(Untitled)" }}",
-                                        modifier = Modifier.fillMaxWidth().border(
-                                            1.dp,
-                                            collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Rule
-                                        ).noRippleClick { model.openOccurrence(event) }.padding(horizontal = 3.dp, vertical = 2.dp),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        fontSize = 11.sp,
-                                        lineHeight = 12.sp
-                                    )
-                                }
-                            }
-                            if (day == now.toLocalDate() && hour == now.hour) {
-                                Box(
-                                    Modifier.align(Alignment.TopStart).offset(y = (72f * now.minute / 60f).dp)
-                                        .fillMaxWidth().height(2.dp).background(CurrentTime)
-                                        .semantics { contentDescription = "Current time ${now.format(DateTimeFormatter.ofPattern("HH:mm"))}" }
-                                )
-                                Box(
-                                    Modifier.align(Alignment.TopStart).offset(y = (72f * now.minute / 60f - 3f).dp)
-                                        .size(8.dp).background(CurrentTime)
-                                )
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            Column(Modifier.fillMaxSize()) {
+                visibleHours.forEach { hour ->
+                    Row(Modifier.fillMaxWidth().weight(1f).border(1.dp, Ink)) {
+                        Box(Modifier.width(62.dp).fillMaxHeight().border(1.dp, Ink), contentAlignment = Alignment.TopCenter) {
+                            Text("%02d:00".format(hour), fontSize = 9.sp, color = MutedInk, modifier = Modifier.padding(top = 1.dp))
+                        }
+                        days.forEach { _ ->
+                            Box(Modifier.weight(1f).fillMaxHeight().border(1.dp, Ink)) {
+                                Box(Modifier.align(Alignment.Center).fillMaxWidth().height(1.dp).background(Rule))
                             }
                         }
                     }
                 }
             }
+            Row(Modifier.fillMaxSize()) {
+                Spacer(Modifier.width(62.dp))
+                days.forEach { day ->
+                    WeekDayTimeline(
+                        day = day,
+                        visibleHours = visibleHours,
+                        events = timedEvents,
+                        collectionMap = collectionMap,
+                        now = now,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        openEvent = model::openOccurrence
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeekDayTimeline(
+    day: LocalDate,
+    visibleHours: IntRange,
+    events: List<CalendarOccurrenceEntity>,
+    collectionMap: Map<String, DavCollectionEntity>,
+    now: ZonedDateTime,
+    modifier: Modifier = Modifier,
+    openEvent: (CalendarOccurrenceEntity) -> Unit
+) {
+    val zone = ZoneId.systemDefault()
+    val visibleStart = day.atTime(visibleHours.first, 0).atZone(zone).toInstant()
+    val visibleEnd = if (visibleHours.last == 23) {
+        day.plusDays(1).atStartOfDay(zone).toInstant()
+    } else {
+        day.atTime(visibleHours.last + 1, 0).atZone(zone).toInstant()
+    }
+    val matching = remember(day, visibleHours, events) {
+        events.filter { event ->
+            event.startEpochMillis < visibleEnd.toEpochMilli() && event.endEpochMillis > visibleStart.toEpochMilli()
+        }.sortedBy(CalendarOccurrenceEntity::startEpochMillis)
+    }
+    val lanes = remember(matching, visibleStart, visibleEnd) {
+        weekEventLanes(
+            matching.map { event ->
+                WeekEventInterval(
+                    event.id,
+                    event.startEpochMillis.coerceAtLeast(visibleStart.toEpochMilli()),
+                    event.endEpochMillis.coerceAtMost(visibleEnd.toEpochMilli())
+                )
+            }
+        ).associateBy(WeekEventLane::key)
+    }
+    val totalMillis = (visibleEnd.toEpochMilli() - visibleStart.toEpochMilli()).coerceAtLeast(1L)
+    BoxWithConstraints(modifier) {
+        matching.forEach { event ->
+            val lane = lanes.getValue(event.id)
+            val clippedStart = event.startEpochMillis.coerceAtLeast(visibleStart.toEpochMilli())
+            val clippedEnd = event.endEpochMillis.coerceAtMost(visibleEnd.toEpochMilli())
+            val top = maxHeight * ((clippedStart - visibleStart.toEpochMilli()).toFloat() / totalMillis)
+            val eventHeight = (maxHeight * ((clippedEnd - clippedStart).toFloat() / totalMillis)).coerceAtLeast(2.dp)
+            val laneWidth = maxWidth / lane.laneCount
+            val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(zone)
+            val end = Instant.ofEpochMilli(event.endEpochMillis).atZone(zone)
+            Text(
+                "${start.format(DateTimeFormatter.ofPattern("HH:mm"))}–${end.format(DateTimeFormatter.ofPattern("HH:mm"))} " +
+                    event.title.ifBlank { "(Untitled)" },
+                modifier = Modifier.offset(x = laneWidth * lane.lane, y = top).width(laneWidth).height(eventHeight)
+                    .background(Paper).border(
+                        1.dp,
+                        collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Rule
+                    ).noRippleClick { openEvent(event) }.padding(horizontal = 2.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 9.sp,
+                lineHeight = 10.sp
+            )
+        }
+        if (day == now.toLocalDate() && now.hour in visibleHours) {
+            val nowMillis = now.toInstant().toEpochMilli()
+            val top = maxHeight * ((nowMillis - visibleStart.toEpochMilli()).toFloat() / totalMillis)
+            Box(
+                Modifier.offset(y = top).fillMaxWidth().height(2.dp).background(CurrentTime)
+                    .semantics { contentDescription = "Current time ${now.format(DateTimeFormatter.ofPattern("HH:mm"))}" }
+            )
+            Box(Modifier.offset(y = top - 3.dp).size(8.dp).background(CurrentTime))
         }
     }
 }
@@ -1573,6 +1643,26 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 InkButton("+ future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths + 6) }
             }
         }
+        SettingPanel("Landscape week hours") {
+            Text(
+                "Show %02d:00–%02d:00 in landscape. Portrait always shows the full day."
+                    .format(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InkButton("Start −") {
+                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour - 1, settings.landscapeWeekEndHour)
+                }
+                InkButton("Start +") {
+                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour + 1, settings.landscapeWeekEndHour)
+                }
+                InkButton("End −") {
+                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour - 1)
+                }
+                InkButton("End +") {
+                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour + 1)
+                }
+            }
+        }
         SettingPanel("Application updates") {
             Text("Installed version $installedVersion")
             when (val state = updateState) {
@@ -2242,6 +2332,46 @@ private fun Modifier.noRippleClick(action: () -> Unit) = composed {
 internal fun displayedWeekDays(date: LocalDate, isPortrait: Boolean): List<LocalDate> {
     val first = if (isPortrait) date else date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     return List(if (isPortrait) 3 else 7) { first.plusDays(it.toLong()) }
+}
+
+internal fun weekAllDayHeaderHeightDp(maxEventsOnDay: Int): Float = (62f + maxEventsOnDay.coerceAtLeast(0) * 20f)
+    .coerceAtMost(182f)
+
+internal fun visibleWeekHours(isPortrait: Boolean, landscapeStartHour: Int, landscapeEndHour: Int): IntRange {
+    if (isPortrait) return 0..23
+    val start = landscapeStartHour.coerceIn(0, 23)
+    return start until landscapeEndHour.coerceIn(start + 1, 24)
+}
+
+internal data class WeekEventInterval(val key: String, val start: Long, val end: Long)
+internal data class WeekEventLane(val key: String, val lane: Int, val laneCount: Int)
+
+internal fun weekEventLanes(intervals: List<WeekEventInterval>): List<WeekEventLane> {
+    val result = mutableListOf<WeekEventLane>()
+    val group = mutableListOf<WeekEventInterval>()
+    var groupEnd = Long.MIN_VALUE
+
+    fun flushGroup() {
+        if (group.isEmpty()) return
+        val laneEnds = mutableListOf<Long>()
+        val assignments = group.map { interval ->
+            val lane = laneEnds.indexOfFirst { it <= interval.start }.let { if (it < 0) laneEnds.size else it }
+            if (lane == laneEnds.size) laneEnds += interval.end else laneEnds[lane] = interval.end
+            interval.key to lane
+        }
+        result += assignments.map { (key, lane) -> WeekEventLane(key, lane, laneEnds.size) }
+        group.clear()
+        groupEnd = Long.MIN_VALUE
+    }
+
+    intervals.sortedWith(compareBy<WeekEventInterval> { it.start }.thenByDescending { it.end }).forEach { interval ->
+        val normalized = interval.copy(end = interval.end.coerceAtLeast(interval.start + 1))
+        if (group.isNotEmpty() && normalized.start >= groupEnd) flushGroup()
+        group += normalized
+        groupEnd = maxOf(groupEnd, normalized.end)
+    }
+    flushGroup()
+    return result
 }
 
 internal fun monthWeekCount(date: LocalDate): Int {

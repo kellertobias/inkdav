@@ -31,6 +31,42 @@ class CalendarLayoutTest {
     }
 
     @Test
+    fun weekHeaderHasAnExplicitBoundedHeight() {
+        assertEquals(62f, weekAllDayHeaderHeightDp(0))
+        assertEquals(102f, weekAllDayHeaderHeightDp(2))
+        assertEquals(182f, weekAllDayHeaderHeightDp(20))
+    }
+
+    @Test
+    fun portraitWeekAlwaysShowsTheFullDay() {
+        assertEquals(0..23, visibleWeekHours(isPortrait = true, landscapeStartHour = 8, landscapeEndHour = 24))
+    }
+
+    @Test
+    fun landscapeWeekUsesConfiguredHours() {
+        assertEquals(8..23, visibleWeekHours(isPortrait = false, landscapeStartHour = 8, landscapeEndHour = 24))
+        assertEquals(6..21, visibleWeekHours(isPortrait = false, landscapeStartHour = 6, landscapeEndHour = 22))
+    }
+
+    @Test
+    fun overlappingWeekEventsUseSeparateLanes() {
+        assertEquals(
+            listOf(
+                WeekEventLane("a", lane = 0, laneCount = 2),
+                WeekEventLane("b", lane = 1, laneCount = 2),
+                WeekEventLane("c", lane = 0, laneCount = 1)
+            ),
+            weekEventLanes(
+                listOf(
+                    WeekEventInterval("a", start = 100, end = 300),
+                    WeekEventInterval("b", start = 200, end = 250),
+                    WeekEventInterval("c", start = 300, end = 400)
+                )
+            )
+        )
+    }
+
+    @Test
     fun september2026UsesOnlyFiveCalendarRows() {
         assertEquals(5, monthWeekCount(LocalDate.of(2026, 9, 1)))
     }

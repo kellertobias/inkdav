@@ -489,6 +489,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun setCalendarWindow(pastDays: Int, futureMonths: Int) = viewModelScope.launch { container.preferences.setCalendarWindow(pastDays, futureMonths) }
+    fun setLandscapeWeekHours(startHour: Int, endHour: Int) = viewModelScope.launch {
+        container.preferences.setLandscapeWeekHours(startHour, endHour)
+    }
     fun setEink(bold: Boolean, pages: Boolean) = viewModelScope.launch { container.preferences.setEink(bold, pages) }
     fun setCalendarVisible(collectionId: String, visible: Boolean) = viewModelScope.launch { container.preferences.setCalendarVisible(collectionId, visible) }
 
