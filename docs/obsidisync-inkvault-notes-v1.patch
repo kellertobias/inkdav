@@ -1357,6 +1357,19 @@ index fa231f7..c378ad4 100644
      let lower = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
      let extension = lower.rsplit('.').next().unwrap_or("");
      matches!(
+diff --git a/rust-server/src/saber/push.rs b/rust-server/src/saber/push.rs
+index f69019d..7f084ed 100644
+--- a/rust-server/src/saber/push.rs
++++ b/rust-server/src/saber/push.rs
+@@ -709,7 +709,7 @@ mod tests {
+     fn detects_body_and_frontmatter_tags() {
+         assert!(has_tag("Read this #tablet later", "tablet"));
+         assert!(has_tag("#Tablet/uni at the start", "tablet"));
+-        assert!(has_tag("tags: [#tablet]\n", "tablet") || true);
++        assert!(has_tag("tags: [#tablet]\n", "tablet"));
+         assert!(!has_tag("a #tablets b", "tablet"));
+         assert!(!has_tag("email#tablet", "tablet"));
+         assert!(has_tag("---\ntags: [uni, tablet]\n---\nbody", "tablet"));
 diff --git a/rust-server/src/vault.rs b/rust-server/src/vault.rs
 index 8714de6..5f41b7d 100644
 --- a/rust-server/src/vault.rs

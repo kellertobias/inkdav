@@ -345,3 +345,23 @@ lint, ktlint and all 12 device tests pass. A 120-stroke / 360-point test recorde
 8.091198 ms maximum native submission overhead. This corrects earlier no-op
 timing claims; physical pencil latency still requires user comparison.
 See the [updated device report](verification/boox-2026-09-08/REPORT.md).
+
+
+## Server release verification (2026-09-08)
+
+Server implementation committed as b2b6734; final deployed revision 96b8365
+also replaces an existing always-true Saber test assertion rejected by hosted
+Clippy. Local validation: 106 Rust tests passed, one ignored; 71 plugin tests
+passed, plugin build, Clippy and formatting passed.
+
+[Hosted CI run 77](https://git.tokenet.de/opensource/obsync/actions/runs/77)
+passed all five jobs: plugin, Rust checks, semantic release, image publication,
+and NAS image update. The update hook pulled the image but did not replace
+the running container, so the owning Compose service was explicitly recreated.
+The running image matches the commit-tagged image, digest
+`sha256:b53390002a4aced14c4a19d9976787d27a2e5e4f99fab52e677858cf35c7e9ad`.
+Public health returned `{"ok":true}` and server info now advertises
+`inkVaultNotesV1`. Startup logs were clean and the container restart count zero.
+Only the server service was recreated; existing neighboring containers retained
+their identities and start times. Authenticated tablet-to-server synchronization
+was not exercised during this deployment check.
