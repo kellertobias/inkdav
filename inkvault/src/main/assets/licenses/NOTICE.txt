@@ -1,0 +1,19 @@
+InkVault third-party components
+
+Jump3r 1.0.5 (de.sciss:jump3r): Java LAME MP3 encoder, LGPL 2.1 or later.
+Authors: The L.A.M.E. project, Ken Handel, Vadym Vikulin, Hanns Holger Rutz.
+Source: https://git.iem.at/sciss/jump3r
+Exact release sources: https://repo.maven.apache.org/maven2/de/sciss/jump3r/1.0.5/jump3r-1.0.5-sources.jar
+License: licenses/LGPL-2.1.txt
+The unmodified encoder is used through its Java core API. The InkVault source
+and Gradle build allow rebuilding the application against a modified encoder.
+
+Markwon 4.6.2: Apache License 2.0, https://github.com/noties/Markwon
+AndroidSVG 1.4: Apache License 2.0, https://github.com/BigBadaboom/androidsvg
+Onyx device SDK 1.1.11: https://github.com/onyx-intl/OnyxAndroidDemo
+AndroidX and OkHttp: Apache License 2.0.
+Fastjson Android compatibility library: Apache License 2.0.
+
+AndroidHiddenApiBypass / LSPass 6.1, Copyright 2021-2025 LSPosed.
+Apache License 2.0; see HiddenApiBypass-APACHE-2.0.txt.
+https://github.com/LSPosed/AndroidHiddenApiBypass

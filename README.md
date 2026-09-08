@@ -4,6 +4,17 @@ InkDAV is an offline-first CalDAV, VTODO, and WebDAV client designed for large A
 
 The UI uses opaque paper-colored surfaces, strong outlines, redundant text status, and page-style navigation. It intentionally avoids shadows, gradients, animated transitions, continuously moving indicators, and color-only state.
 
+## InkVault (in development)
+
+The separate `:inkvault` Android app implements an initial offline Obsidian vault,
+Markdown and handwriting workspace. It is not a completed implementation of the
+handwriting app plan. Source/PDF pairing is implemented in the companion
+[ObsidiSync server patch](docs/obsidisync-inkvault-notes-v1.patch); handwriting
+sync requires that updated server.
+See [implementation and acceptance status](docs/INKVAULT_IMPLEMENTATION.md) for
+features, known gaps, builds and verification. Its package is `de.tobisk.inkvault`
+and its release artifacts use `InkVault-vVERSION-boox-note-air5c.apk`.
+
 ## Current vertical slice
 
 - Multiple DAV and NASDrive accounts with Android Keystore-encrypted credentials.

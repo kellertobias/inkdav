@@ -41,8 +41,18 @@ jobs:
         run: |
           ./scripts/verify-boox-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk "" unsigned
           ./scripts/verify-boox-apk.sh app/build/outputs/apk/debug/app-debug.apk "" signed
+          ./scripts/verify-boox-apk.sh inkvault/build/outputs/apk/debug/inkvault-debug.apk "" signed de.tobisk.inkvault
+          ./scripts/verify-boox-apk.sh inkvault/build/outputs/apk/release/inkvault-release-unsigned.apk "" unsigned de.tobisk.inkvault
           mkdir -p dist/ci
           cp app/build/outputs/apk/debug/app-debug.apk dist/ci/InkDAV-main-boox-note-air5c-debug.apk
+
+      - name: Upload InkVault test APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkvault-debug-${{ github.sha }}
+          path: inkvault/build/outputs/apk/debug/inkvault-debug.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload installable BOOX test APK
         uses: actions/upload-artifact@v7

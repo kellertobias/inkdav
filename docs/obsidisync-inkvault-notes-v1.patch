@@ -1,0 +1,3341 @@
+diff --git a/README.md b/README.md
+index 879c712..a50d8bc 100644
+--- a/README.md
++++ b/README.md
+@@ -349,6 +349,13 @@ Files uploaded over WebDAV are committed to the vault repository under the devic
+ 
+ The endpoint implements WebDAV class 1 (`OPTIONS`, `PROPFIND` with depth 0 or 1, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `MOVE`, `COPY`) plus advisory `LOCK`/`UNLOCK` so class 2 clients such as macOS Finder or Windows Explorer work too. Downloads support single byte ranges (`Range: bytes=...`) for PDF viewers that read files in place. Uploads are streamed to disk, so large PDFs do not have to fit into server memory, and are limited by `OBSIDIAN_GIT_SYNC_WEBDAV_MAX_BODY_BYTES` (default 200 MB). If the server sits behind a reverse proxy, raise its request body limit for `/dav/` as well (for nginx, `client_max_body_size`; its default of 1 MB rejects most PDF uploads with `413`). Re-uploading an unchanged file is a no-op and does not create a new version.
+ 
++### InkVault editable handwriting
++
++Native InkVault clients can publish editable source packages and server-rendered
++PDFs as one recoverable Git revision. Ordinary Obsidian clients receive the PDF.
++See [the InkVault notes v1 protocol](docs/INKVAULT_NOTES_V1.md) for negotiation,
++annotation, conflict resolution, recovery, and rendering limits.
++
+ ### Saber handwritten notes (Nextcloud emulation)
+ 
+ [Saber](https://github.com/saber-notes/saber) is an open-source handwriting app that syncs through Nextcloud with end-to-end encryption. ObsidiSync can stand in for that Nextcloud server: Saber logs in against the sync server, uploads its encrypted notes into one vault folder (so all Saber devices stay in sync through the server), and — if you trust the server with your Saber encryption password — the server decrypts each note and writes a PDF next to it in the vault, refreshed every time the note changes. The PDFs open in Obsidian like any other attachment.
+diff --git a/rust-server/Cargo.lock b/rust-server/Cargo.lock
+index d580c99..8a6d72a 100644
+--- a/rust-server/Cargo.lock
++++ b/rust-server/Cargo.lock
+@@ -68,6 +68,18 @@ dependencies = [
+  "password-hash",
+ ]
+ 
++[[package]]
++name = "arrayref"
++version = "0.3.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
++
++[[package]]
++name = "arrayvec"
++version = "0.7.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
++
+ [[package]]
+ name = "async-trait"
+ version = "0.1.89"
+@@ -431,6 +443,12 @@ dependencies = [
+  "cipher",
+ ]
+ 
++[[package]]
++name = "data-url"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
++
+ [[package]]
+ name = "defmt"
+ version = "1.1.1"
+@@ -547,6 +565,15 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "euclid"
++version = "0.22.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
++dependencies = [
++ "num-traits",
++]
++
+ [[package]]
+ name = "fastrand"
+ version = "2.4.1"
+@@ -579,6 +606,12 @@ dependencies = [
+  "zlib-rs",
+ ]
+ 
++[[package]]
++name = "float-cmp"
++version = "0.9.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
++
+ [[package]]
+ name = "form_urlencoded"
+ version = "1.2.2"
+@@ -939,11 +972,17 @@ dependencies = [
+  "byteorder-lite",
+  "moxcms",
+  "num-traits",
+- "png",
++ "png 0.18.1",
+  "zune-core",
+  "zune-jpeg",
+ ]
+ 
++[[package]]
++name = "imagesize"
++version = "0.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
++
+ [[package]]
+ name = "indexmap"
+ version = "2.14.2"
+@@ -1055,6 +1094,17 @@ dependencies = [
+  "simple_asn1",
+ ]
+ 
++[[package]]
++name = "kurbo"
++version = "0.11.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c62026ae44756f8a599ba21140f350303d4f08dcdcc71b5ad9c9bb8128c13c62"
++dependencies = [
++ "arrayvec",
++ "euclid",
++ "smallvec",
++]
++
+ [[package]]
+ name = "lazy_static"
+ version = "1.5.0"
+@@ -1301,6 +1351,8 @@ dependencies = [
+  "pdf-writer",
+  "percent-encoding",
+  "reqwest",
++ "resvg",
++ "roxmltree",
+  "serde",
+  "serde_json",
+  "serde_urlencoded",
+@@ -1359,12 +1411,31 @@ version = "2.3.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+ 
++[[package]]
++name = "pico-args"
++version = "0.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
++
+ [[package]]
+ name = "pin-project-lite"
+ version = "0.2.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+ 
++[[package]]
++name = "png"
++version = "0.17.16"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
++dependencies = [
++ "bitflags 1.3.2",
++ "crc32fast",
++ "fdeflate",
++ "flate2",
++ "miniz_oxide 0.8.9",
++]
++
+ [[package]]
+ name = "png"
+ version = "0.18.1"
+@@ -1647,6 +1718,29 @@ dependencies = [
+  "webpki-roots",
+ ]
+ 
++[[package]]
++name = "resvg"
++version = "0.45.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a8928798c0a55e03c9ca6c4c6846f76377427d2c1e1f7e6de3c06ae57942df43"
++dependencies = [
++ "log",
++ "pico-args",
++ "rgb",
++ "svgtypes",
++ "tiny-skia",
++ "usvg",
++]
++
++[[package]]
++name = "rgb"
++version = "0.8.53"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
++dependencies = [
++ "bytemuck",
++]
++
+ [[package]]
+ name = "ring"
+ version = "0.17.14"
+@@ -1661,6 +1755,12 @@ dependencies = [
+  "windows-sys 0.52.0",
+ ]
+ 
++[[package]]
++name = "roxmltree"
++version = "0.20.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
++
+ [[package]]
+ name = "rustc-hash"
+ version = "2.1.2"
+@@ -1880,6 +1980,21 @@ dependencies = [
+  "time",
+ ]
+ 
++[[package]]
++name = "simplecss"
++version = "0.2.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7a9c6883ca9c3c7c90e888de77b7a5c849c779d25d74a1269b0218b14e8b136c"
++dependencies = [
++ "log",
++]
++
++[[package]]
++name = "siphasher"
++version = "1.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
++
+ [[package]]
+ name = "slab"
+ version = "0.4.12"
+@@ -1908,6 +2023,15 @@ version = "1.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+ 
++[[package]]
++name = "strict-num"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
++dependencies = [
++ "float-cmp",
++]
++
+ [[package]]
+ name = "stringprep"
+ version = "0.1.5"
+@@ -1925,6 +2049,16 @@ version = "2.6.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+ 
++[[package]]
++name = "svgtypes"
++version = "0.15.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "68c7541fff44b35860c1a7a47a7cadf3e4a304c457b58f9870d9706ece028afc"
++dependencies = [
++ "kurbo",
++ "siphasher",
++]
++
+ [[package]]
+ name = "syn"
+ version = "2.0.118"
+@@ -2040,6 +2174,32 @@ dependencies = [
+  "time-core",
+ ]
+ 
++[[package]]
++name = "tiny-skia"
++version = "0.11.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "83d13394d44dae3207b52a326c0c85a8bf87f1541f23b0d143811088497b09ab"
++dependencies = [
++ "arrayref",
++ "arrayvec",
++ "bytemuck",
++ "cfg-if",
++ "log",
++ "png 0.17.16",
++ "tiny-skia-path",
++]
++
++[[package]]
++name = "tiny-skia-path"
++version = "0.11.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9c9e7fc0c2e86a30b117d0462aa261b72b7a99b7ebd7deb3a14ceda95c5bdc93"
++dependencies = [
++ "arrayref",
++ "bytemuck",
++ "strict-num",
++]
++
+ [[package]]
+ name = "tinystr"
+ version = "0.8.3"
+@@ -2267,6 +2427,28 @@ dependencies = [
+  "serde",
+ ]
+ 
++[[package]]
++name = "usvg"
++version = "0.45.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "80be9b06fbae3b8b303400ab20778c80bbaf338f563afe567cf3c9eea17b47ef"
++dependencies = [
++ "base64",
++ "data-url",
++ "flate2",
++ "imagesize",
++ "kurbo",
++ "log",
++ "pico-args",
++ "roxmltree",
++ "simplecss",
++ "siphasher",
++ "strict-num",
++ "svgtypes",
++ "tiny-skia-path",
++ "xmlwriter",
++]
++
+ [[package]]
+ name = "utf8_iter"
+ version = "1.0.4"
+@@ -2647,6 +2829,12 @@ dependencies = [
+  "tap",
+ ]
+ 
++[[package]]
++name = "xmlwriter"
++version = "0.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
++
+ [[package]]
+ name = "yoke"
+ version = "0.8.3"
+diff --git a/rust-server/Cargo.toml b/rust-server/Cargo.toml
+index 0461996..bf50080 100644
+--- a/rust-server/Cargo.toml
++++ b/rust-server/Cargo.toml
+@@ -21,6 +21,8 @@ jsonwebtoken = "9"
+ lopdf = "0.44"
+ pdf-writer = "0.15"
+ percent-encoding = "2"
++roxmltree = "0.20"
++resvg = { version = "0.45.1", default-features = false }
+ reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+diff --git a/rust-server/src/binary_store.rs b/rust-server/src/binary_store.rs
+index b70a86d..fe734fb 100644
+--- a/rust-server/src/binary_store.rs
++++ b/rust-server/src/binary_store.rs
+@@ -46,7 +46,7 @@ pub async fn write_manifest(repo: &Path, manifest: &BinaryManifest) -> Result<()
+     if let Some(parent) = path.parent() {
+         fs::create_dir_all(parent).await?;
+     }
+-    fs::write(path, serde_json::to_vec_pretty(manifest)?).await?;
++    crate::vault::inkvault::durable_write(&path, &serde_json::to_vec_pretty(manifest)?).await?;
+     Ok(())
+ }
+ 
+@@ -64,7 +64,7 @@ pub async fn store_binary(
+         fs::create_dir_all(parent).await?;
+     }
+     if fs::metadata(&absolute).await.is_err() {
+-        fs::write(&absolute, content).await?;
++        crate::vault::inkvault::durable_write(&absolute, content).await?;
+     }
+     Ok(BinaryEntry {
+         sha256: sha,
+diff --git a/rust-server/src/http.rs b/rust-server/src/http.rs
+index 7875157..3e1d8c7 100644
+--- a/rust-server/src/http.rs
++++ b/rust-server/src/http.rs
+@@ -25,6 +25,7 @@ const MIN_CLIENT_API_VERSION: u32 = 1;
+ /// Optional capabilities advertised to clients. Older plugins ignore the list; newer plugins
+ /// hide or explain features that the server they talk to does not have yet.
+ const SERVER_FEATURES: &[&str] = &[
++    "inkVaultNotesV1",
+     "webdavDevicePasswords",
+     "syncFileReferences",
+     "saberNextcloud",
+@@ -164,6 +165,8 @@ impl IntoResponse for ApiError {
+             || message.contains("password is not set")
+         {
+             StatusCode::UNAUTHORIZED
++        } else if message.starts_with("InkNote changed since conflict") {
++            StatusCode::CONFLICT
+         } else if message.contains("forbidden") {
+             StatusCode::FORBIDDEN
+         } else if message.contains("not found") || message.contains("Unknown vault") {
+@@ -230,6 +233,10 @@ pub fn router_with_webdav_limit(
+             post(complete_upload),
+         )
+         .route("/v1/users/:user/vaults/:vault/sync", post(sync))
++        .route(
++            "/v1/users/:user/vaults/:vault/inkvault/resolve",
++            post(resolve_inkvault),
++        )
+         .route("/v1/users/:user/vaults/:vault/history", get(history))
+         .route("/v1/users/:user/vaults/:vault/file", get(file_at_version))
+         .route("/v1/users/:user/vaults/:vault/blob", get(blob_at_version))
+@@ -313,7 +320,8 @@ fn public_error_message(status: StatusCode, message: &str) -> String {
+ }
+ 
+ fn is_public_client_error(message: &str) -> bool {
+-    message.starts_with("invalid ")
++    message.starts_with("InkNote ")
++        || message.starts_with("invalid ")
+         || message.starts_with("unsafe vault path")
+         || message.starts_with("local git remotes are disabled")
+         || message.starts_with("git remote ")
+@@ -835,7 +843,25 @@ async fn sync(
+             ClientChange::Upsert { path, .. } | ClientChange::Delete { path } => path.clone(),
+         })
+         .collect();
+-    let response = state.vaults.sync(&user, &vault, request).await?;
++    let native = inkvault_client(&headers);
++    let has_source = request
++        .changes
++        .iter()
++        .any(|c| crate::inkvault::is_source(crate::vault::inkvault::change_path(c)));
++    let mut response = if native && has_source {
++        state.vaults.sync_inkvault(&user, &vault, request).await?
++    } else {
++        state
++            .vaults
++            .sync_with_sources(&user, &vault, request, native)
++            .await?
++    };
++    if !native {
++        response
++            .files
++            .retain(|f| !crate::inkvault::is_source(crate::vault::inkvault::file_path(f)));
++    }
++
+     state.tablet.schedule(&user, &vault, changed);
+     Ok(Json(response))
+ }
+@@ -885,6 +911,9 @@ async fn history(
+     Query(query): Query<HistoryQuery>,
+ ) -> Result<Json<Vec<HistoryEntry>>, ApiError> {
+     authorize(&state, &headers, &user).await?;
++    if let Some(path) = &query.path {
++        authorize_inkvault_path(&headers, path)?;
++    }
+     Ok(Json(
+         state
+             .vaults
+@@ -900,6 +929,7 @@ async fn file_at_version(
+     Query(query): Query<FileQuery>,
+ ) -> Result<Json<VersionFileResponse>, ApiError> {
+     authorize(&state, &headers, &user).await?;
++    authorize_inkvault_path(&headers, &query.path)?;
+     Ok(Json(
+         state
+             .vaults
+@@ -917,6 +947,7 @@ async fn blob_at_version(
+     Query(query): Query<FileQuery>,
+ ) -> Result<Response, ApiError> {
+     authorize(&state, &headers, &user).await?;
++    authorize_inkvault_path(&headers, &query.path)?;
+     let (path, content) = state
+         .vaults
+         .file_bytes_at_version(&user, &vault, &query.path, &query.hash)
+@@ -946,7 +977,12 @@ async fn resolve(
+     Json(request): Json<ResolveRequest>,
+ ) -> Result<Json<SyncResponse>, ApiError> {
+     authorize(&state, &headers, &user).await?;
+-    Ok(Json(state.vaults.resolve(&user, &vault, request).await?))
++    Ok(Json(
++        state
++            .vaults
++            .resolve_with_sources(&user, &vault, request, inkvault_client(&headers))
++            .await?,
++    ))
+ }
+ 
+ async fn devices(
+@@ -1171,3 +1207,34 @@ fn cookie_decode(value: &str) -> Option<String> {
+     }
+     String::from_utf8(output).ok()
+ }
++
++fn inkvault_client(headers: &HeaderMap) -> bool {
++    headers
++        .get("x-obsidisync-client-features")
++        .and_then(|v| v.to_str().ok())
++        .is_some_and(|v| v.split(',').any(|f| f.trim() == crate::inkvault::FEATURE))
++}
++fn authorize_inkvault_path(headers: &HeaderMap, path: &str) -> Result<(), ApiError> {
++    if crate::inkvault::is_source(path) && !inkvault_client(headers) {
++        return Err(anyhow::anyhow!("InkNote source requires inkVaultNotesV1").into());
++    }
++    Ok(())
++}
++
++async fn resolve_inkvault(
++    State(state): State<Arc<AppState>>,
++    headers: HeaderMap,
++    Path((user, vault)): Path<(String, String)>,
++    Json(request): Json<SyncRequest>,
++) -> Result<Json<SyncResponse>, ApiError> {
++    authorize(&state, &headers, &user).await?;
++    if !inkvault_client(&headers) {
++        return Err(anyhow::anyhow!("paired resolution requires inkVaultNotesV1").into());
++    }
++    Ok(Json(
++        state
++            .vaults
++            .resolve_inkvault(&user, &vault, request)
++            .await?,
++    ))
++}
+diff --git a/rust-server/src/lib.rs b/rust-server/src/lib.rs
+index b6ead27..273e87d 100644
+--- a/rust-server/src/lib.rs
++++ b/rust-server/src/lib.rs
+@@ -16,3 +16,5 @@ pub mod time_format;
+ pub mod vault;
+ pub mod version_registry;
+ pub mod webdav;
++
++pub mod inkvault;
+diff --git a/rust-server/src/paths.rs b/rust-server/src/paths.rs
+index fa231f7..c378ad4 100644
+--- a/rust-server/src/paths.rs
++++ b/rust-server/src/paths.rs
+@@ -116,6 +116,9 @@ pub fn repo_path(repo_root: &Path, vault_path: &str) -> Result<PathBuf> {
+ }
+ 
+ pub fn is_text_or_code_path(path: &str) -> bool {
++    if path.starts_with(".inkvault/") {
++        return false;
++    }
+     let lower = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+     let extension = lower.rsplit('.').next().unwrap_or("");
+     matches!(
+diff --git a/rust-server/src/vault.rs b/rust-server/src/vault.rs
+index 8714de6..5f41b7d 100644
+--- a/rust-server/src/vault.rs
++++ b/rust-server/src/vault.rs
+@@ -26,6 +26,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
+ use tokio::sync::Mutex;
+ 
+ pub mod dav;
++pub mod inkvault;
+ 
+ const UPLOAD_CHUNK_SIZE_BYTES: u64 = 512 * 1024;
+ const PENDING_CONFLICTS_PATH: &str = "pending-conflicts.json";
+@@ -265,6 +266,15 @@ impl VaultService {
+         user: &str,
+         vault: &str,
+         request: SyncRequest,
++    ) -> Result<SyncResponse> {
++        self.sync_with_sources(user, vault, request, false).await
++    }
++    pub async fn sync_with_sources(
++        &self,
++        user: &str,
++        vault: &str,
++        request: SyncRequest,
++        include_sources: bool,
+     ) -> Result<SyncResponse> {
+         let user = validate_slug(user, "user")?;
+         let vault = validate_slug(vault, "vault")?;
+@@ -303,6 +313,17 @@ impl VaultService {
+                 }
+             }
+ 
++            self.guard_inkvault_paths(
++                &repo,
++                &binary_root,
++                &request
++                    .changes
++                    .iter()
++                    .map(|c| inkvault::change_path(c).to_string())
++                    .collect::<Vec<_>>(),
++            )
++            .await?;
++
+             let conflicts = self
+                 .apply_client_changes(
+                     ClientChangeContext {
+@@ -393,6 +414,7 @@ impl VaultService {
+                     base_head.as_deref(),
+                     &request.client_manifest,
+                     request.file_content.is_inline(),
++                    include_sources,
+                 )
+                 .await?;
+ 
+@@ -895,6 +917,15 @@ impl VaultService {
+         user: &str,
+         vault: &str,
+         request: ResolveRequest,
++    ) -> Result<SyncResponse> {
++        self.resolve_with_sources(user, vault, request, false).await
++    }
++    pub async fn resolve_with_sources(
++        &self,
++        user: &str,
++        vault: &str,
++        request: ResolveRequest,
++        include_sources: bool,
+     ) -> Result<SyncResponse> {
+         let user = validate_slug(user, "user")?;
+         let vault = validate_slug(vault, "vault")?;
+@@ -905,6 +936,16 @@ impl VaultService {
+             let binary_root = self.binary_dir(&user, &vault);
+             let upload_root = self.upload_dir(&user, &vault);
+             let inline = request.file_content.is_inline();
++            self.guard_inkvault_paths(
++                &repo,
++                &binary_root,
++                &request
++                    .files
++                    .iter()
++                    .map(|f| f.path.clone())
++                    .collect::<Vec<_>>(),
++            )
++            .await?;
+             let mut resolved_paths = Vec::new();
+             for file in request.files {
+                 let safe = validate_vault_path(&file.path)?;
+@@ -993,7 +1034,7 @@ impl VaultService {
+             .map(|conflict| conflict.path)
+             .collect();
+             let files = self
+-                .changed_files_since(&repo, &binary_root, None, &[], inline)
++                .changed_files_since(&repo, &binary_root, None, &[], inline, include_sources)
+                 .await?
+                 .into_iter()
+                 .filter(|file| !still_pending.contains(file_path(file)))
+@@ -1045,6 +1086,7 @@ impl VaultService {
+     async fn ensure_remote_branch(&self, repo: &Path, branch: &str) -> Result<()> {
+         let branch = validate_git_branch(branch)?;
+         let remote_branch = format!("origin/{branch}");
++
+         self.fetch(repo).await?;
+         let remote = git(
+             Some(repo),
+@@ -1213,6 +1255,7 @@ impl VaultService {
+         Ok(conflicts)
+     }
+ 
++    #[allow(clippy::too_many_arguments)]
+     async fn changed_files_since(
+         &self,
+         repo: &Path,
+@@ -1220,6 +1263,7 @@ impl VaultService {
+         base_head: Option<&str>,
+         client_manifest: &[ManifestEntry],
+         inline: bool,
++        include_sources: bool,
+     ) -> Result<Vec<ServerFileChange>> {
+         let mut files = Vec::new();
+         let client_manifest_by_path: HashMap<&str, &ManifestEntry> = client_manifest
+@@ -1289,6 +1333,9 @@ impl VaultService {
+             BinaryManifest::default()
+         };
+         for (path, entry) in current_manifest.files.iter() {
++            if !include_sources && crate::inkvault::is_source(path) {
++                continue;
++            }
+             if previous_manifest.files.get(path) != Some(entry) {
+                 if base_head.is_none()
+                     && client_has_manifest_entry(
+@@ -1314,12 +1361,56 @@ impl VaultService {
+             }
+         }
+         for path in previous_manifest.files.keys() {
++            if !include_sources && crate::inkvault::is_source(path) {
++                continue;
++            }
+             if !current_manifest.files.contains_key(path) {
+                 files.push(ServerFileChange::Delete { path: path.clone() });
+             }
+         }
+ 
+         files.sort_by(|left, right| file_path(left).cmp(file_path(right)));
++        // Send a complete pair whenever any member changed, so clients can preserve conflicts atomically.
++        let mut roots = BTreeSet::new();
++        for f in &files {
++            if let Ok(root) = crate::inkvault::document_root(inkvault::file_path(f)) {
++                roots.insert(root);
++            }
++        }
++        for root in roots {
++            let prefix = format!("{root}/");
++            let manifest_path = format!("{root}/manifest.json");
++            let mut paths: BTreeSet<String> = current_manifest
++                .files
++                .keys()
++                .chain(previous_manifest.files.keys())
++                .filter(|p| p.starts_with(&prefix))
++                .cloned()
++                .collect();
++            for ledger in [&current_manifest, &previous_manifest] {
++                if let Some(entry) = ledger.files.get(&manifest_path) {
++                    let value: serde_json::Value =
++                        serde_json::from_slice(&read_binary_object(binary_root, entry).await?)?;
++                    paths.insert(crate::inkvault::text(&value, "pdfPath")?.to_string());
++                }
++            }
++            files.retain(|f| !paths.contains(inkvault::file_path(f)));
++            for path in paths {
++                files.push(match current_manifest.files.get(&path) {
++                    Some(entry) => ServerFileChange::Upsert {
++                        path,
++                        sha256: entry.sha256.clone(),
++                        size: Some(entry.size),
++                        content_base64: if inline {
++                            Some(STANDARD.encode(read_binary_object(binary_root, entry).await?))
++                        } else {
++                            None
++                        },
++                    },
++                    None => ServerFileChange::Delete { path },
++                });
++            }
++        }
+         Ok(files)
+     }
+ 
+@@ -1344,6 +1435,42 @@ impl VaultService {
+     async fn rebase_remote(&self, repo: &Path, branch: &str) -> Result<Option<Vec<SyncConflict>>> {
+         let branch = validate_git_branch(branch)?;
+         let remote_branch = format!("origin/{branch}");
++        if read_manifest(repo)
++            .await?
++            .files
++            .keys()
++            .any(|p| crate::inkvault::is_source(p))
++        {
++            let remote = git(
++                Some(repo),
++                &["rev-parse", "--verify", &remote_branch],
++                &[0, 128],
++            )
++            .await?;
++            if remote.code != 0 {
++                return Ok(None);
++            }
++            let ancestor = git(
++                Some(repo),
++                &["merge-base", "--is-ancestor", &remote_branch, "HEAD"],
++                &[0, 1],
++            )
++            .await?;
++            if ancestor.code == 0 {
++                return Ok(None);
++            }
++            let ff = git(
++                Some(repo),
++                &["merge", "--ff-only", &remote_branch],
++                &[0, 1, 128],
++            )
++            .await?;
++            if ff.code == 0 {
++                return Ok(None);
++            }
++            bail!("InkNote remote diverged; reconcile the vault before publishing");
++        }
++
+         let remote = git(
+             Some(repo),
+             &["rev-parse", "--verify", &remote_branch],
+@@ -1454,7 +1581,7 @@ impl VaultService {
+         {
+             Ok(files) => files,
+             Err(_) => {
+-                self.changed_files_since(repo, binary_root, base_head, &[], true)
++                self.changed_files_since(repo, binary_root, base_head, &[], true, false)
+                     .await?
+             }
+         };
+@@ -1764,6 +1891,7 @@ impl VaultService {
+                 .clone()
+         };
+         let _guard = lock.lock().await;
++        self.recover_inkvault(user, vault).await?;
+         operation().await
+     }
+ }
+diff --git a/rust-server/src/vault/dav.rs b/rust-server/src/vault/dav.rs
+index 3fe79f0..98ba351 100644
+--- a/rust-server/src/vault/dav.rs
++++ b/rust-server/src/vault/dav.rs
+@@ -133,7 +133,13 @@ impl VaultService {
+                 Vec::new()
+             };
+             paths.retain(|path| !is_hidden_path(path) && !manifest.files.contains_key(path));
+-            paths.extend(manifest.files.keys().cloned());
++            paths.extend(
++                manifest
++                    .files
++                    .keys()
++                    .filter(|p| !is_hidden_path(p))
++                    .cloned(),
++            );
+             paths.sort();
+             paths.dedup();
+             Ok(paths)
+@@ -214,6 +220,12 @@ impl VaultService {
+             let state = self.read_registered_state(&user, &vault).await?;
+             let repo = self.repo_dir(&user, &vault);
+             let binary_root = self.binary_dir(&user, &vault);
++            self.guard_inkvault_paths(
++                &repo,
++                &self.binary_dir(&user, &vault),
++                std::slice::from_ref(&path),
++            )
++            .await?;
+             let mut manifest = read_manifest(&repo).await?;
+             let existing = stat_unlocked(&repo, &manifest, &path).await?;
+             if existing.as_ref().is_some_and(|entry| entry.is_dir) {
+@@ -259,6 +271,12 @@ impl VaultService {
+         self.with_lock(&user, &vault, || async {
+             let state = self.read_registered_state(&user, &vault).await?;
+             let repo = self.repo_dir(&user, &vault);
++            self.guard_inkvault_paths(
++                &repo,
++                &self.binary_dir(&user, &vault),
++                std::slice::from_ref(&path),
++            )
++            .await?;
+             let mut manifest = read_manifest(&repo).await?;
+             let entry = stat_unlocked(&repo, &manifest, &path)
+                 .await?
+@@ -337,6 +355,12 @@ impl VaultService {
+             let state = self.read_registered_state(&user, &vault).await?;
+             let repo = self.repo_dir(&user, &vault);
+             let binary_root = self.binary_dir(&user, &vault);
++            self.guard_inkvault_paths(
++                &repo,
++                &self.binary_dir(&user, &vault),
++                &[from.clone(), to.clone()],
++            )
++            .await?;
+             let mut manifest = read_manifest(&repo).await?;
+             let source = stat_unlocked(&repo, &manifest, &from)
+                 .await?
+@@ -478,7 +502,9 @@ pub fn validate_dav_path(path: &str) -> Result<String> {
+ }
+ 
+ fn is_hidden_path(path: &str) -> bool {
+-    path == ".git"
++    path == ".inkvault"
++        || path.starts_with(".inkvault/")
++        || path == ".git"
+         || path.starts_with(".git/")
+         || path == ".obsidian-git-sync"
+         || path.starts_with(".obsidian-git-sync/")
+@@ -593,6 +619,9 @@ async fn list_unlocked(repo: &Path, manifest: &BinaryManifest, dir: &str) -> Res
+ 
+     let prefix = manifest_prefix(dir);
+     for (key, entry) in &manifest.files {
++        if is_hidden_path(key) {
++            continue;
++        }
+         let Some(rest) = key.strip_prefix(&prefix) else {
+             continue;
+         };
+diff --git a/docs/INKVAULT_NOTES_V1.md b/docs/INKVAULT_NOTES_V1.md
+new file mode 100644
+index 0000000..93da626
+--- /dev/null
++++ b/docs/INKVAULT_NOTES_V1.md
+@@ -0,0 +1,101 @@
++# InkVault notes v1
++
++The server advertises `inkVaultNotesV1` in `/v1/server/info`. Native clients send
++`X-ObsidiSync-Client-Features: inkVaultNotesV1` on sync, history and blob requests.
++The feature header selects representation, not authorization: existing bearer
++identity and vault access checks still apply. Ordinary sync and WebDAV show the
++visible PDF only. They cannot write, delete or move a managed PDF independently.
++
++## Wire protocol
++
++Use the existing staged upload API, then POST the standard `SyncRequest` to
++`/v1/users/{user}/vaults/{vault}/sync`. Ordinary files and InkNotes use separate
++requests. A source request contains exactly one document, including its
++`manifest.json` and changed pages/assets. Unchanged source is loaded from the
++current package. InkVault currently uploads the complete package. Every upsert
++requires SHA-256; `fileContent: "reference"` keeps responses small. `baseHead`
++identifies the revision the device edited. Unrelated server changes do not
++conflict, but any changed member of the pair does. The server returns all members
++of a changed/conflicted pair, including deletion tombstones. It does not advance
++the client merge base on a conflict. A replay of the same source revision is a
++no-op even though the server has replaced the manifest's `renderRevision`.
++
++POST the same request shape to `/v1/users/{user}/vaults/{vault}/inkvault/resolve`
++to keep a local pair after review. Here `baseHead` must equal the exact server
++head shown to the user; a later update returns HTTP 409. Send the complete source
++and advance `sourceRevision` above the received revision. The PDF is always
++regenerated. Choosing the received pair is a local, atomic adoption of all the
++verified conflict blobs; it does not rewrite server content.
++
++Source layout:
++
++```
++.inkvault/notes/{documentUUID}/manifest.json
++.inkvault/notes/{documentUUID}/pages/{pageUUID}.cbor
++.inkvault/notes/{documentUUID}/assets/{sha256}.{extension}
++```
++
++The manifest contains schemaVersion 1, documentId, pdfPath, title, created,
++modified, monotonically increasing sourceRevision, server-derived renderRevision,
++and ordered pages with id, width, height, orientation, template and sha256.
++Units are integer micrometres, milliseconds, and thousandths for pressure/tilt.
++CBOR uses canonical definite-length string-keyed maps and integers. Unknown
++supported CBOR values and JSON fields remain in the stored source. The renderer
++rejects unsupported encodings instead of interpreting them approximately.
++
++New notes use A4 portrait/landscape pages, up to 500 pages. Annotation manifests
++also specify basePdfHash and basePdfRevision; the server verifies the original
++PDF at that historical commit. For an offline import, a null basePdfRevision is
++anchored to the current server head only after its PDF hash is verified. Base identity and page IDs/order/dimensions stay
++fixed. Each render starts from that original PDF, preserving its content and
++adding vector ink, rather than repeatedly flattening a previous rendition.
++
++## Publication and recovery
++
++Every hidden source file and the generated PDF is an immutable SHA-addressed
++binary object. Their pointers live together in the Git binary manifest. Before
++publication the server validates all source, renders the PDF, and flushes new
++objects. An alternate Git index builds one commit containing the new ledger.
++A flushed recovery journal records old/new heads and the ledger, then a compare-
++and-swap ref update publishes the commit. The working ledger and index are
++reconciled before the journal is removed. The next vault operation after a crash
++rolls the transaction forward and checks the journal against the committed tree.
++An unexpected head stops recovery rather than overwriting an unrelated commit.
++
++`inkvault-render.json` beside the vault records the latest render as pending,
++failed (with the source revision/error), or ready (with the committed head).
++Failed renders leave the previous pair and Git head unchanged. Completed upload
++objects and client outbox data remain available for retry. A failed remote push
++also leaves the committed pair intact for retry. Once a vault has InkNotes,
++remote updates must be fast-forwards; divergent Git histories require explicit
++operator reconciliation instead of a text merge of the binary ledger.
++
++Deletion requires deletion of every source path, including the manifest; the
++server deletes the visible PDF in the same revision. Git history and the immutable
++object store retain earlier complete pairs.
++
++## Rendering limits and current boundaries
++
++- Vector pen/pressure strokes and translucent markers remain vector PDF content.
++- PDF templates remain PDF form objects; PNG/JPEG and SVG path artwork are bounded
++  raster assets, cached when reused. Host fonts and external resources are not
++  used. SVG text must be converted to paths; nested SVG images and foreignObject
++  are rejected explicitly.
++- Limits: 1 MiB manifest, 8 MiB CBOR/page, 64 MiB active vector source, 256 MiB
++  package, 4096 package files, 128 MiB accumulated decoded image streams, and
++  256 MiB output PDF. Publications are serialized across vaults to bound concurrent
++  render allocations. These are safeguards, not a full load-test result.
++- Encrypted PDFs and non-default PDF UserUnit are rejected. Annotation rotation
++  and CropBox/MediaBox are honored. Managed PDF renaming is currently rejected;
++  create a separate document to change its visible path.
++- No automatic divergent-remote reconciliation, blob garbage collection,
++  renderer migration, or production deployment is included.
++
++## Verification
++
++`cargo test --manifest-path rust-server/Cargo.toml` exercises the existing server
++suite. `--test inkvault_tests` covers lost responses, incomplete staged uploads,
++stale-pair conflicts, compare-and-swap resolution, visibility/WebDAV guards,
++recovery before/after ref publication, original PDF preservation, paired deletion,
++deterministic PNG/SVG/PDF-template rendering, and 500 mixed-orientation pages.
++Android also tests journal persistence and whole-pair conflict adoption on BOOX.
+diff --git a/rust-server/src/inkvault/cbor.rs b/rust-server/src/inkvault/cbor.rs
+new file mode 100644
+index 0000000..2b796f9
+--- /dev/null
++++ b/rust-server/src/inkvault/cbor.rs
+@@ -0,0 +1,130 @@
++//! Canonical InkNote CBOR: integer micrometres/time/pressure, string-keyed maps.
++use anyhow::{bail, ensure, Result};
++use serde_json::{Map, Value};
++
++pub fn decode(bytes: &[u8]) -> Result<Value> {
++    ensure!(bytes.len() <= 8 * 1024 * 1024, "InkNote page exceeds 8 MiB");
++    let mut decoder = Decoder { bytes, pos: 0 };
++    let value = decoder.value(0)?;
++    ensure!(decoder.pos == bytes.len(), "trailing CBOR data");
++    Ok(value)
++}
++struct Decoder<'a> {
++    bytes: &'a [u8],
++    pos: usize,
++}
++impl Decoder<'_> {
++    fn byte(&mut self) -> Result<u8> {
++        ensure!(self.pos < self.bytes.len(), "truncated CBOR");
++        let byte = self.bytes[self.pos];
++        self.pos += 1;
++        Ok(byte)
++    }
++    fn value(&mut self, depth: usize) -> Result<Value> {
++        ensure!(depth <= 32, "CBOR nesting limit");
++        let tag = self.byte()?;
++        let major = tag >> 5;
++        let info = tag & 31;
++        if major == 7 {
++            return match info {
++                20 => Ok(false.into()),
++                21 => Ok(true.into()),
++                22 => Ok(Value::Null),
++                _ => {
++                    bail!("InkNote numbers must be integers")
++                }
++            };
++        }
++        let n = if info < 24 {
++            info as u64
++        } else {
++            ensure!(
++                (24..=27).contains(&info),
++                "indefinite CBOR is not canonical"
++            );
++            let mut n = 0u64;
++            for _ in 0..(1 << (info - 24)) {
++                n = (n << 8) | self.byte()? as u64;
++            }
++            let minimum = match info {
++                24 => 24,
++                25 => 256,
++                26 => 65536,
++                _ => 0x1_0000_0000,
++            };
++            ensure!(n >= minimum, "noncanonical CBOR integer/length");
++            n
++        };
++        ensure!(n <= i64::MAX as u64, "integer out of range");
++        Ok(match major {
++            0 => Value::from(n as i64),
++            1 => Value::from(-1 - n as i64),
++            3 => {
++                ensure!(
++                    n <= (self.bytes.len() - self.pos) as u64,
++                    "truncated string"
++                );
++                let text = std::str::from_utf8(&self.bytes[self.pos..self.pos + n as usize])?;
++                self.pos += n as usize;
++                Value::from(text)
++            }
++            4 => {
++                ensure!(
++                    n <= (self.bytes.len() - self.pos) as u64,
++                    "invalid array length"
++                );
++                let mut values = Vec::new();
++                for _ in 0..n {
++                    values.push(self.value(depth + 1)?);
++                }
++                Value::Array(values)
++            }
++            5 => {
++                ensure!(
++                    n <= ((self.bytes.len() - self.pos) / 2) as u64,
++                    "invalid map length"
++                );
++                let mut values = Map::new();
++                let mut previous: Option<Vec<u8>> = None;
++                for _ in 0..n {
++                    let start = self.pos;
++                    let key = self.value(depth + 1)?;
++                    let encoded = self.bytes[start..self.pos].to_vec();
++                    if let Some(prior) = &previous {
++                        ensure!(
++                            (prior.len(), prior) < (encoded.len(), &encoded),
++                            "noncanonical/duplicate map key"
++                        );
++                    }
++                    previous = Some(encoded);
++                    let key = key
++                        .as_str()
++                        .ok_or_else(|| anyhow::anyhow!("CBOR map keys must be strings"))?;
++                    values.insert(key.into(), self.value(depth + 1)?);
++                }
++                Value::Object(values)
++            }
++            _ => bail!("unsupported InkNote CBOR type"),
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn rejects_noncanonical_and_truncated_data() {
++        for input in [
++            &[0x18, 0x01][..],
++            &[0x9a, 0x00, 0x80, 0, 0][..],
++            &[1, 2][..],
++            &[0xa2, 0x61, b'a', 0, 0x61, b'a', 1][..],
++        ] {
++            assert!(decode(input).is_err());
++        }
++        assert_eq!(
++            decode(&[0xa1, 0x61, b'a', 0x82, 0x01, 0xf6]).unwrap(),
++            serde_json::json!({"a":[1,null]})
++        );
++    }
++}
+diff --git a/rust-server/src/inkvault/mod.rs b/rust-server/src/inkvault/mod.rs
+new file mode 100644
+index 0000000..e5f8198
+--- /dev/null
++++ b/rust-server/src/inkvault/mod.rs
+@@ -0,0 +1,101 @@
++//! InkNote v1 validation and deterministic PDF rendering, independent of HTTP/storage.
++pub mod cbor;
++mod render;
++use crate::paths::validate_vault_path;
++use anyhow::{anyhow, ensure, Result};
++pub use render::render;
++use serde_json::Value;
++use std::collections::BTreeSet;
++
++pub const FEATURE: &str = "inkVaultNotesV1";
++pub const PREFIX: &str = ".inkvault/notes/";
++pub fn is_source(path: &str) -> bool {
++    path.starts_with(".inkvault/")
++}
++pub fn document_root(path: &str) -> Result<String> {
++    validate_vault_path(path)?;
++    let rest = path
++        .strip_prefix(PREFIX)
++        .ok_or_else(|| anyhow!("invalid InkNote path"))?;
++    let id = rest.split('/').next().unwrap_or_default();
++    ensure!(uuid(id), "invalid InkNote document ID");
++    Ok(format!("{PREFIX}{id}"))
++}
++pub fn uuid(id: &str) -> bool {
++    id.len() == 36
++        && id.bytes().enumerate().all(|(i, c)| {
++            if [8, 13, 18, 23].contains(&i) {
++                c == b'-'
++            } else {
++                c.is_ascii_hexdigit() && !c.is_ascii_uppercase()
++            }
++        })
++}
++pub fn integer(value: &Value, key: &str) -> Result<i64> {
++    value[key]
++        .as_i64()
++        .ok_or_else(|| anyhow!("missing integer {key}"))
++}
++pub fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
++    value[key]
++        .as_str()
++        .ok_or_else(|| anyhow!("missing string {key}"))
++}
++pub fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
++    value[key]
++        .as_array()
++        .ok_or_else(|| anyhow!("missing array {key}"))
++}
++pub fn manifest(bytes: &[u8], root: &str) -> Result<Value> {
++    ensure!(bytes.len() <= 1024 * 1024, "manifest exceeds 1 MiB");
++    let m: Value = serde_json::from_slice(bytes)?;
++    ensure!(
++        integer(&m, "schemaVersion")? == 1,
++        "unsupported InkNote schema"
++    );
++    ensure!(
++        text(&m, "documentId")? == root.rsplit('/').next().unwrap_or_default(),
++        "document ID/path mismatch"
++    );
++    let path = text(&m, "pdfPath")?;
++    validate_vault_path(path)?;
++    ensure!(
++        !path.split('/').any(|part| part.starts_with('.'))
++            && path.to_ascii_lowercase().ends_with(".pdf"),
++        "invalid visible PDF path"
++    );
++    ensure!(
++        (1..=500).contains(&array(&m, "pages")?.len()),
++        "InkNote must have 1–500 pages"
++    );
++    ensure!(
++        integer(&m, "sourceRevision")? > 0,
++        "invalid source revision"
++    );
++    ensure!(
++        integer(&m, "created")? >= 0 && integer(&m, "modified")? >= 0,
++        "invalid timestamps"
++    );
++    ensure!(text(&m, "title")?.len() <= 4096, "title too long");
++    let mut ids = BTreeSet::new();
++    for page in array(&m, "pages")? {
++        let id = text(page, "id")?;
++        ensure!(uuid(id) && ids.insert(id), "duplicate/invalid page ID");
++        let (w, h) = (integer(page, "width")?, integer(page, "height")?);
++        if m.get("basePdfHash").is_none() {
++            ensure!(
++                (w, h) == (210000, 297000) || (w, h) == (297000, 210000),
++                "handwritten pages must be A4"
++            );
++        }
++        ensure!(
++            (1000..=2000000).contains(&w) && (1000..=2000000).contains(&h),
++            "invalid page dimensions"
++        );
++        ensure!(
++            text(page, "orientation")? == if w > h { "landscape" } else { "portrait" },
++            "orientation mismatch"
++        );
++    }
++    Ok(m)
++}
+diff --git a/rust-server/src/inkvault/render.rs b/rust-server/src/inkvault/render.rs
+new file mode 100644
+index 0000000..c138057
+--- /dev/null
++++ b/rust-server/src/inkvault/render.rs
+@@ -0,0 +1,466 @@
++use super::{array, cbor, integer, text};
++use crate::binary_store::sha256_hex;
++use anyhow::{Result, anyhow, bail, ensure};
++use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
++use serde_json::Value;
++use std::collections::{BTreeMap, HashMap};
++use std::io::Cursor;
++const PT: f64 = 72.0 / 25400.0;
++
++/// No timestamps, random identifiers or host fonts enter the PDF. Retains vector ink and PDF bases.
++pub fn render(
++    manifest: &Value,
++    files: &BTreeMap<String, Vec<u8>>,
++    base: Option<&[u8]>,
++) -> Result<Vec<u8>> {
++    let mut doc = if let Some(base) = base {
++        Document::load_mem(base)?
++    } else {
++        Document::with_version("1.7")
++    };
++    ensure!(
++        !doc.is_encrypted(),
++        "encrypted PDF annotations are unsupported"
++    );
++    let page_specs = array(manifest, "pages")?;
++    let base_pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
++    if base.is_some() {
++        ensure!(
++            base_pages.len() == page_specs.len(),
++            "annotation pages are fixed"
++        );
++    }
++    let tree = if base.is_none() {
++        doc.new_object_id()
++    } else {
++        (0, 0)
++    };
++    if base.is_none() {
++        doc.objects.insert(
++            tree,
++            Object::Dictionary(
++                dictionary! {"Type"=>"Pages", "Kids"=>Vec::<Object>::new(),"Count"=>0},
++            ),
++        );
++    }
++    let mut pages = Vec::new();
++    let mut imported: HashMap<String, Vec<ObjectId>> = HashMap::new();
++    let mut source_bytes = 0usize;
++    let root = format!(".inkvault/notes/{}", text(manifest, "documentId")?);
++    for (index, spec) in page_specs.iter().enumerate() {
++        let path = format!("{root}/pages/{}.cbor", text(spec, "id")?);
++        let bytes = files
++            .get(&path)
++            .ok_or_else(|| anyhow!("missing page {path}"))?;
++        ensure!(
++            sha256_hex(bytes) == text(spec, "sha256")?,
++            "page checksum mismatch"
++        );
++        source_bytes += bytes.len();
++        ensure!(
++            source_bytes <= 64 * 1024 * 1024,
++            "note exceeds 64 MiB of vector data"
++        );
++        let page = cbor::decode(bytes)?;
++        ensure!(
++            integer(&page, "schemaVersion")? == 1,
++            "unsupported page schema"
++        );
++        let (w, h) = (integer(&page, "width")?, integer(&page, "height")?);
++        ensure!(
++            w == integer(spec, "width")? && h == integer(spec, "height")?,
++            "page dimensions differ from manifest"
++        );
++        let id = if base.is_some() {
++            base_pages[index]
++        } else {
++            doc.add_object(dictionary! {"Type" => "Page", "Parent" => tree, "MediaBox" => vec![0.into(),0.into(),Object::Real((w as f64*PT) as f32),Object::Real((h as f64*PT) as f32)], "Resources" => Dictionary::new()})
++        };
++        let (bounds, rotation) = page_bounds(&doc, id)?;
++        let display_w = if rotation % 180 == 0 {
++            bounds[2] - bounds[0]
++        } else {
++            bounds[3] - bounds[1]
++        };
++        let display_h = if rotation % 180 == 0 {
++            bounds[3] - bounds[1]
++        } else {
++            bounds[2] - bounds[0]
++        };
++        ensure!(
++            (w as f64 * PT - display_w).abs() <= 1.1 && (h as f64 * PT - display_h).abs() <= 1.1,
++            "annotation dimensions do not match base PDF"
++        );
++        let mut resources = inherited(&doc, id, b"Resources")?
++            .map(|v| v.as_dict().cloned())
++            .transpose()?
++            .unwrap_or_default();
++        let mut objects = subdict(&doc, &resources, b"XObject")?;
++        let mut graphics = subdict(&doc, &resources, b"ExtGState")?;
++        let marker_name = free_name(&graphics, "InkVaultMarker");
++        let marker = doc.add_object(dictionary!{"Type"=>"ExtGState", "CA"=>0.39215687f32, "ca"=>0.39215687f32, "BM"=>"Darken"});
++        graphics.set(marker_name.as_bytes(), marker);
++        let matrix = match rotation {
++            0 => [PT, 0., 0., -PT, bounds[0], bounds[3]],
++            90 => [0., PT, PT, 0., bounds[0], bounds[1]],
++            180 => [-PT, 0., 0., PT, bounds[2], bounds[1]],
++            270 => [0., -PT, -PT, 0., bounds[2], bounds[3]],
++            _ => unreachable!(),
++        };
++        let mut content = format!(
++            "q\n{} {} {} {} {} {} cm\n0 0 {w} {h} re W n\n",
++            matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]
++        );
++        if base.is_none() {
++            content.push_str(&format!("1 1 1 rg 0 0 {w} {h} re f\n"));
++        }
++        if let Some(template) = spec.get("template").filter(|v| !v.is_null()) {
++            ensure!(
++                base.is_none(),
++                "PDF annotation cannot replace its background template"
++            );
++            place(
++                &mut doc,
++                &mut objects,
++                &mut imported,
++                &mut content,
++                files,
++                text(template, "asset")?,
++                0,
++                0,
++                w,
++                h,
++                Some(integer(template, "page")?),
++            )?;
++        }
++        let items = array(&page, "objects")?;
++        ensure!(items.len() <= 2048, "too many placed images");
++        for obj in items {
++            place(
++                &mut doc,
++                &mut objects,
++                &mut imported,
++                &mut content,
++                files,
++                text(obj, "asset")?,
++                integer(obj, "x")?,
++                integer(obj, "y")?,
++                integer(obj, "width")?,
++                integer(obj, "height")?,
++                None,
++            )?;
++        }
++        let strokes = array(&page, "strokes")?;
++        ensure!(strokes.len() <= 50000, "too many strokes");
++        let mut ids = std::collections::BTreeSet::new();
++        for stroke in strokes {
++            ensure!(ids.insert(text(stroke, "id")?), "duplicate stroke ID");
++            let style = &stroke["style"];
++            let tool = text(style, "tool")?;
++            ensure!(tool == "pen" || tool == "marker", "unsupported ink tool");
++            let pressure = style["pressure"]
++                .as_bool()
++                .ok_or_else(|| anyhow!("invalid pressure style"))?;
++            let width = integer(style, "width")?;
++            ensure!((50..=20000).contains(&width), "invalid stroke width");
++            let color = integer(style, "color")?;
++            ensure!((0..=0xffff_ffff).contains(&color), "invalid ink color");
++            let samples = array(stroke, "points")?;
++            ensure!(
++                !samples.is_empty() && samples.len() <= 100000,
++                "invalid stroke length"
++            );
++            let points = samples
++                .iter()
++                .map(|sample| {
++                    let p = sample
++                        .as_array()
++                        .ok_or_else(|| anyhow!("invalid stroke point"))?;
++                    ensure!(p.len() == 5, "unsupported point schema");
++                    let x = p[0].as_i64().ok_or_else(|| anyhow!("invalid x"))?;
++                    let y = p[1].as_i64().ok_or_else(|| anyhow!("invalid y"))?;
++                    ensure!(
++                        x.unsigned_abs() <= 10000000
++                            && y.unsigned_abs() <= 10000000
++                            && p[2].as_i64().is_some_and(|t| t >= 0),
++                        "invalid point position/time"
++                    );
++                    let force = if p[3].is_null() {
++                        1000
++                    } else {
++                        p[3].as_i64().ok_or_else(|| anyhow!("invalid pressure"))?
++                    };
++                    ensure!((0..=2000).contains(&force), "invalid pressure");
++                    Ok((x, y, force))
++                })
++                .collect::<Result<Vec<_>>>()?;
++            content.push_str("q 1 J 1 j\n");
++            if tool == "marker" {
++                content.push_str(&format!("/{marker_name} gs\n"));
++            }
++            content.push_str(&format!(
++                "{} {} {} RG\n",
++                ((color >> 16) & 255) as f64 / 255.,
++                ((color >> 8) & 255) as f64 / 255.,
++                (color & 255) as f64 / 255.
++            ));
++            for i in 0..points.len().saturating_sub(1).max(1) {
++                let a = points[i];
++                let b = points[(i + 1).min(points.len() - 1)];
++                let thickness = width as f64
++                    * if pressure {
++                        (b.2 as f64 / 1000.).clamp(0.2, 2.)
++                    } else {
++                        1.
++                    };
++                // A tiny line makes taps visible with round caps in all PDF viewers.
++                let bx = if a.0 == b.0 && a.1 == b.1 {
++                    b.0 as f64 + 0.01
++                } else {
++                    b.0 as f64
++                };
++                content.push_str(&format!(
++                    "{thickness} w {} {} m {bx} {} l S\n",
++                    a.0, a.1, b.1
++                ));
++            }
++            content.push_str("Q\n");
++        }
++        content.push_str("Q\n");
++        ensure!(
++            content.len() <= 32 * 1024 * 1024,
++            "rendered page exceeds limit"
++        );
++        let old = doc.get_page_content_with_limit(id, 64 * 1024 * 1024)?;
++        let mut combined = b"q\n".to_vec();
++        combined.extend(old);
++        combined.extend(b"\nQ\n");
++        combined.extend(content.as_bytes());
++        let stream = doc.add_object(Stream::new(Dictionary::new(), combined));
++        resources.set("XObject", objects);
++        resources.set("ExtGState", graphics);
++        let page = doc.get_object_mut(id)?.as_dict_mut()?;
++        page.set("Contents", stream);
++        page.set("Resources", resources);
++        pages.push(Object::Reference(id));
++    }
++    if base.is_none() {
++        doc.objects.insert(
++            tree,
++            Object::Dictionary(
++                dictionary! {"Type"=>"Pages", "Kids"=>pages, "Count"=>page_specs.len() as i64},
++            ),
++        );
++        let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
++        doc.trailer.set("Root", catalog);
++    }
++    // Avoid automatic compression heuristics/timestamps; stable object allocation and ordering.
++    let mut bytes = Vec::new();
++    doc.save_to(&mut bytes)?;
++    ensure!(bytes.len() <= 256 * 1024 * 1024, "PDF exceeds 256 MiB");
++    Ok(bytes)
++}
++fn resolved(doc: &Document, value: &Object) -> Result<Object> {
++    Ok(match value {
++        Object::Reference(id) => doc.get_object(*id)?.clone(),
++        _ => value.clone(),
++    })
++}
++fn inherited(doc: &Document, mut page: ObjectId, key: &[u8]) -> Result<Option<Object>> {
++    for _ in 0..32 {
++        let dict = doc.get_object(page)?.as_dict()?;
++        if let Ok(value) = dict.get(key) {
++            return Ok(Some(resolved(doc, value)?));
++        }
++        match dict.get(b"Parent").and_then(Object::as_reference) {
++            Ok(parent) => page = parent,
++            Err(_) => return Ok(None),
++        }
++    }
++    bail!("cyclic PDF page tree")
++}
++fn subdict(doc: &Document, parent: &Dictionary, key: &[u8]) -> Result<Dictionary> {
++    Ok(match parent.get(key) {
++        Ok(v) => resolved(doc, v)?.as_dict()?.clone(),
++        Err(_) => Dictionary::new(),
++    })
++}
++fn number(v: &Object) -> Result<f64> {
++    match v {
++        Object::Integer(n) => Ok(*n as f64),
++        Object::Real(n) => Ok(*n as f64),
++        _ => bail!("invalid PDF coordinate"),
++    }
++}
++fn page_bounds(doc: &Document, page: ObjectId) -> Result<([f64; 4], i64)> {
++    let bbox = inherited(doc, page, b"CropBox")?
++        .or(inherited(doc, page, b"MediaBox")?)
++        .ok_or_else(|| anyhow!("missing PDF page box"))?;
++    let values = bbox.as_array()?;
++    ensure!(values.len() == 4, "invalid PDF page box");
++    let bounds = [
++        number(&values[0])?,
++        number(&values[1])?,
++        number(&values[2])?,
++        number(&values[3])?,
++    ];
++    ensure!(
++        bounds.iter().all(|n| n.is_finite()) && bounds[2] > bounds[0] && bounds[3] > bounds[1],
++        "invalid PDF bounds"
++    );
++    let rotation = inherited(doc, page, b"Rotate")?
++        .map(|v| v.as_i64())
++        .transpose()?
++        .unwrap_or(0)
++        .rem_euclid(360);
++    ensure!(
++        [0, 90, 180, 270].contains(&rotation),
++        "unsupported PDF rotation"
++    );
++    let unit = inherited(doc, page, b"UserUnit")?
++        .map(|v| number(&v))
++        .transpose()?
++        .unwrap_or(1.);
++    ensure!(unit == 1., "PDF UserUnit must be 1 for annotation");
++    Ok((bounds, rotation))
++}
++fn free_name(dict: &Dictionary, prefix: &str) -> String {
++    (0..)
++        .map(|i| format!("{prefix}{i}"))
++        .find(|s| !dict.has(s.as_bytes()))
++        .unwrap()
++}
++#[allow(clippy::too_many_arguments)]
++fn place(
++    doc: &mut Document,
++    objects: &mut Dictionary,
++    imported: &mut HashMap<String, Vec<ObjectId>>,
++    content: &mut String,
++    files: &BTreeMap<String, Vec<u8>>,
++    asset: &str,
++    x: i64,
++    y: i64,
++    w: i64,
++    h: i64,
++    pdf_page: Option<i64>,
++) -> Result<()> {
++    ensure!(
++        w > 0
++            && h > 0
++            && w <= 10000000
++            && h <= 10000000
++            && x.unsigned_abs() <= 10000000
++            && y.unsigned_abs() <= 10000000,
++        "invalid image transform"
++    );
++    let bytes = files
++        .get(asset)
++        .ok_or_else(|| anyhow!("missing asset {asset}"))?;
++    let ext = asset.rsplit('.').next().unwrap_or_default();
++    let (object, natural_w, natural_h) = if ext == "pdf" {
++        if !imported.contains_key(asset) {
++            let mut source = Document::load_mem(bytes)?;
++            ensure!(!source.is_encrypted(), "encrypted templates unsupported");
++            source.renumber_objects_with(doc.max_id + 1);
++            let pages = source.get_pages().into_values().collect();
++            doc.max_id = doc.max_id.max(source.max_id);
++            doc.objects.extend(source.objects);
++            imported.insert(asset.into(), pages);
++        }
++        let index = pdf_page.ok_or_else(|| anyhow!("PDF asset requires page index"))?;
++        ensure!((0..500).contains(&index), "invalid template page");
++        let page = *imported[asset]
++            .get(index as usize)
++            .ok_or_else(|| anyhow!("template page out of range"))?;
++        let (b, rotation) = page_bounds(doc, page)?;
++        let (nw, nh, matrix) = match rotation {
++            0 => (b[2] - b[0], b[3] - b[1], [1., 0., 0., 1., -b[0], -b[1]]),
++            90 => (b[3] - b[1], b[2] - b[0], [0., -1., 1., 0., -b[1], b[2]]),
++            180 => (b[2] - b[0], b[3] - b[1], [-1., 0., 0., -1., b[2], b[3]]),
++            _ => (b[3] - b[1], b[2] - b[0], [0., 1., -1., 0., b[3], -b[0]]),
++        };
++        let mut data = format!(
++            "q {} {} {} {} {} {} cm\n",
++            matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]
++        )
++        .into_bytes();
++        data.extend(doc.get_page_content_with_limit(page, 64 * 1024 * 1024)?);
++        data.extend(b"\nQ\n");
++        let resources =
++            inherited(doc, page, b"Resources")?.unwrap_or(Object::Dictionary(Dictionary::new()));
++        let object = doc.add_object(Stream::new(dictionary!{"Type"=>"XObject","Subtype"=>"Form","FormType"=>1,"BBox"=>vec![0.into(),0.into(),Object::Real(nw as f32),Object::Real(nh as f32)],"Resources"=>resources},data));
++        (object, nw, nh)
++    } else if let Some(cached) = imported.get(asset) {
++        (cached[0], 1., 1.)
++    } else {
++        let rgba = if ext == "svg" {
++            let source = std::str::from_utf8(bytes)?;
++            let xml = roxmltree::Document::parse(source)?;
++            ensure!(
++                !xml.descendants().any(
++                    |node| ["text", "foreignObject", "image"].contains(&node.tag_name().name())
++                ),
++                "SVG text must be converted to paths and nested images supplied separately"
++            );
++            let mut options = resvg::usvg::Options::default();
++            options.image_href_resolver.resolve_string = Box::new(|_, _| None);
++            options.image_href_resolver.resolve_data = Box::new(|_, _, _| None);
++            let tree = resvg::usvg::Tree::from_data(bytes, &options)?;
++            let size = tree.size();
++            let scale = (1600. / size.width()).min(2000. / size.height()).min(1.);
++            let mut pixmap = resvg::tiny_skia::Pixmap::new(
++                (size.width() * scale).ceil() as u32,
++                (size.height() * scale).ceil() as u32,
++            )
++            .ok_or_else(|| anyhow!("invalid SVG size"))?;
++            resvg::render(
++                &tree,
++                resvg::tiny_skia::Transform::from_scale(scale, scale),
++                &mut pixmap.as_mut(),
++            );
++            image::load_from_memory(&pixmap.encode_png()?)?.into_rgba8()
++        } else {
++            ensure!(
++                ["png", "jpg", "jpeg"].contains(&ext),
++                "unsupported image asset"
++            );
++            let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
++            let mut limits = image::Limits::default();
++            limits.max_image_width = Some(12000);
++            limits.max_image_height = Some(12000);
++            limits.max_alloc = Some(128 * 1024 * 1024);
++            reader.limits(limits);
++            reader.decode()?.thumbnail(2000, 2000).into_rgba8()
++        };
++        let existing_bytes: usize = doc
++            .objects
++            .values()
++            .filter_map(|o| o.as_stream().ok())
++            .map(|s| s.content.len())
++            .sum();
++        ensure!(
++            existing_bytes.saturating_add(rgba.len()) <= 128 * 1024 * 1024,
++            "decoded PDF assets exceed 128 MiB"
++        );
++        let (nw, nh) = rgba.dimensions();
++        let mut rgb = Vec::with_capacity(nw as usize * nh as usize * 3);
++        let mut alpha = Vec::with_capacity(nw as usize * nh as usize);
++        for p in rgba.pixels() {
++            rgb.extend_from_slice(&p.0[..3]);
++            alpha.push(p[3]);
++        }
++        let mask = doc.add_object(Stream::new(dictionary!{"Type"=>"XObject","Subtype"=>"Image","Width"=>nw as i64,"Height"=>nh as i64,"ColorSpace"=>"DeviceGray","BitsPerComponent"=>8},alpha));
++        let image = doc.add_object(Stream::new(dictionary!{"Type"=>"XObject","Subtype"=>"Image","Width"=>nw as i64,"Height"=>nh as i64,"ColorSpace"=>"DeviceRGB","BitsPerComponent"=>8,"SMask"=>mask},rgb));
++        imported.insert(asset.into(), vec![image]);
++        (image, 1., 1.)
++    };
++    let name = free_name(objects, "InkVaultImage");
++    objects.set(name.as_bytes(), object);
++    content.push_str(&format!(
++        "q {} 0 0 {} {x} {} cm /{name} Do Q\n",
++        w as f64 / natural_w,
++        -(h as f64) / natural_h,
++        y + h
++    ));
++    Ok(())
++}
+diff --git a/rust-server/src/vault/inkvault.rs b/rust-server/src/vault/inkvault.rs
+new file mode 100644
+index 0000000..0dc1db8
+--- /dev/null
++++ b/rust-server/src/vault/inkvault.rs
+@@ -0,0 +1,740 @@
++//! Native InkNote publication. All package pointers and the PDF change in one Git tree.
++use super::*;
++use crate::inkvault::{self as ink, array, integer, text};
++use anyhow::ensure;
++use serde_json::Value;
++use tokio::process::Command;
++
++#[derive(Serialize, Deserialize)]
++struct Publication {
++    old_head: Option<String>,
++    new_head: String,
++    manifest: BinaryManifest,
++}
++
++pub fn change_path(change: &ClientChange) -> &str {
++    match change {
++        ClientChange::Upsert { path, .. } | ClientChange::Delete { path } => path,
++    }
++}
++pub fn file_path(change: &ServerFileChange) -> &str {
++    match change {
++        ServerFileChange::Upsert { path, .. } | ServerFileChange::Delete { path } => path,
++    }
++}
++
++static PUBLICATION_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
++
++impl VaultService {
++    /// Ordinary callers cannot overwrite one half of a managed note.
++    pub(super) async fn guard_inkvault_paths(
++        &self,
++        repo: &Path,
++        binary: &Path,
++        paths: &[String],
++    ) -> Result<()> {
++        let ledger = read_manifest(repo).await?;
++        let mut protected = Vec::new();
++        for (path, entry) in &ledger.files {
++            if ink::is_source(path) && path.ends_with("/manifest.json") {
++                let m: Value = serde_json::from_slice(&read_binary_object(binary, entry).await?)?;
++                protected.push(text(&m, "pdfPath")?.to_string());
++            }
++        }
++        for path in paths {
++            ensure!(
++                !ink::is_source(path)
++                    && !protected
++                        .iter()
++                        .any(|p| p == path || p.starts_with(&format!("{path}/"))),
++                "InkNote pair requires inkVaultNotesV1: {path}"
++            );
++        }
++        Ok(())
++    }
++
++    /// One complete document per request. Ordinary files use the regular sync endpoint.
++    pub async fn sync_inkvault(
++        &self,
++        user: &str,
++        vault: &str,
++        request: SyncRequest,
++    ) -> Result<SyncResponse> {
++        self.sync_inkvault_inner(user, vault, request, false).await
++    }
++    pub async fn resolve_inkvault(
++        &self,
++        user: &str,
++        vault: &str,
++        request: SyncRequest,
++    ) -> Result<SyncResponse> {
++        ensure!(
++            request.base_head.is_some() && !request.changes.is_empty(),
++            "paired resolution requires expected server head and complete source"
++        );
++        self.sync_inkvault_inner(user, vault, request, true).await
++    }
++    async fn sync_inkvault_inner(
++        &self,
++        user: &str,
++        vault: &str,
++        request: SyncRequest,
++        resolving: bool,
++    ) -> Result<SyncResponse> {
++        let user = validate_slug(user, "user")?;
++        let vault = validate_slug(vault, "vault")?;
++        self.with_lock(&user, &vault, || {
++            self.sync_inkvault_locked(&user, &vault, request, resolving)
++        })
++        .await
++    }
++    async fn sync_inkvault_locked(
++        &self,
++        user: &str,
++        vault: &str,
++        request: SyncRequest,
++        resolving: bool,
++    ) -> Result<SyncResponse> {
++        let _slot = PUBLICATION_SLOT.acquire().await?;
++        let repo = self.repo_dir(user, vault);
++        let binary = self.binary_dir(user, vault);
++        let state = self.read_state(user, vault).await?;
++        self.configure_git(&repo, &state).await?;
++        // Never text-merge the ledger. A remote divergence requires explicit reconciliation.
++        if state.uses_remote() {
++            self.fetch(&repo).await?;
++            let remote = format!("origin/{}", state.branch);
++            let exists = git(Some(&repo), &["rev-parse", "--verify", &remote], &[0, 128]).await?;
++            if exists.code == 0 {
++                let result =
++                    git(Some(&repo), &["merge", "--ff-only", &remote], &[0, 1, 128]).await?;
++                ensure!(
++                    result.code == 0,
++                    "InkNote remote diverged; reconcile the vault before publishing"
++                );
++            }
++        }
++        let head = self.head_from_repo(&repo).await?;
++        let base = validate_optional_commit_id(request.base_head.as_deref())?;
++        if let Some(ref base) = base {
++            ensure!(
++                self.valid_commit(&repo, base).await?,
++                "unknown InkNote base revision"
++            );
++        }
++        ensure!(
++            !resolving || base == head,
++            "InkNote changed since conflict was shown; synchronize again"
++        );
++        let current = read_manifest(&repo).await?;
++        if request.changes.is_empty() {
++            if state.uses_remote() {
++                git(
++                    Some(&repo),
++                    &[
++                        "push",
++                        "origin",
++                        &format!("HEAD:refs/heads/{}", state.branch),
++                    ],
++                    &[0],
++                )
++                .await?;
++            }
++            return Ok(SyncResponse {
++                status: SyncStatus::Ok,
++                server_head: head,
++                files: self
++                    .changed_files_since(
++                        &repo,
++                        &binary,
++                        base.as_deref(),
++                        &request.client_manifest,
++                        request.file_content.is_inline(),
++                        true,
++                    )
++                    .await?,
++                conflicts: vec![],
++            });
++        }
++        let root = ink::document_root(change_path(&request.changes[0]))?;
++        let prefix = format!("{root}/");
++        let manifest_path = format!("{root}/manifest.json");
++        let mut files = BTreeMap::new();
++        let mut bytes = 0usize;
++        for (path, entry) in &current.files {
++            if path.starts_with(&prefix) {
++                bytes = bytes
++                    .checked_add(entry.size as usize)
++                    .ok_or_else(|| anyhow!("package too large"))?;
++                ensure!(bytes <= 256 * 1024 * 1024, "package exceeds 256 MiB");
++                files.insert(path.clone(), read_binary_object(&binary, entry).await?);
++            }
++        }
++        let old_manifest = files
++            .get(&manifest_path)
++            .map(|b| ink::manifest(b, &root))
++            .transpose()?;
++        let mut touched = BTreeSet::new();
++        for change in &request.changes {
++            let path = change_path(change);
++            ensure!(
++                ink::document_root(path)? == root
++                    && path.starts_with(&prefix)
++                    && touched.insert(path.to_string()),
++                "request must contain unique paths in one InkNote"
++            );
++            match change {
++                ClientChange::Upsert {
++                    content_base64,
++                    upload_id,
++                    sha256,
++                    ..
++                } => {
++                    let content = self
++                        .content_from_inline_or_upload(
++                            &self.upload_dir(user, vault),
++                            path,
++                            content_base64.as_ref(),
++                            upload_id.as_ref(),
++                        )
++                        .await?;
++                    ensure!(
++                        sha256.as_deref() == Some(sha256_hex(&content).as_str()),
++                        "InkNote checksum mismatch"
++                    );
++                    bytes = bytes
++                        .saturating_sub(files.get(path).map_or(0, Vec::len))
++                        .saturating_add(content.len());
++                    ensure!(bytes <= 256 * 1024 * 1024, "package exceeds 256 MiB");
++                    files.insert(path.to_string(), content);
++                }
++                ClientChange::Delete { .. } => {
++                    files.remove(path);
++                }
++            }
++        }
++        ensure!(
++            touched.contains(&manifest_path),
++            "publish the manifest with every InkNote change"
++        );
++        let previous = if let Some(ref base) = base {
++            self.binary_manifest_at(&repo, base).await?
++        } else {
++            BinaryManifest::default()
++        };
++        let deleting = !files.contains_key(&manifest_path);
++        if deleting
++            && old_manifest.is_none()
++            && !previous.files.contains_key(&manifest_path)
++            && !current.files.keys().any(|p| p.starts_with(&prefix))
++            && files.is_empty()
++            && request
++                .changes
++                .iter()
++                .all(|c| matches!(c, ClientChange::Delete { .. }))
++        {
++            // A document created and deleted offline has never had a server-side pair.
++            return Ok(SyncResponse {
++                status: SyncStatus::Ok,
++                server_head: head,
++                files: self
++                    .changed_files_since(
++                        &repo,
++                        &binary,
++                        base.as_deref(),
++                        &request.client_manifest,
++                        request.file_content.is_inline(),
++                        true,
++                    )
++                    .await?,
++                conflicts: vec![],
++            });
++        }
++        let mut manifest = if deleting {
++            if let Some(old) = &old_manifest {
++                old.clone()
++            } else {
++                let entry = previous
++                    .files
++                    .get(&manifest_path)
++                    .ok_or_else(|| anyhow!("note not found"))?;
++                ink::manifest(&read_binary_object(&binary, entry).await?, &root)?
++            }
++        } else {
++            ink::manifest(&files[&manifest_path], &root)?
++        };
++        let pdf_path = text(&manifest, "pdfPath")?.to_string();
++        let base_pdf_path = manifest
++            .get("basePdfPath")
++            .and_then(Value::as_str)
++            .unwrap_or(&pdf_path)
++            .to_string();
++        validate_vault_path(&base_pdf_path)?;
++        if manifest.get("basePdfHash").is_some() && manifest["basePdfRevision"].is_null() {
++            manifest["basePdfRevision"] = if let Some(old) = &old_manifest {
++                ensure!(
++                    old["basePdfHash"] == manifest["basePdfHash"],
++                    "annotation base cannot change"
++                );
++                old["basePdfRevision"].clone()
++            } else {
++                let hash = text(&manifest, "basePdfHash")?;
++                ensure!(
++                    current
++                        .files
++                        .get(&base_pdf_path)
++                        .is_some_and(|entry| entry.sha256 == hash),
++                    "annotation base changed"
++                );
++                Value::String(
++                    head.clone()
++                        .ok_or_else(|| anyhow!("annotation base must be uploaded first"))?,
++                )
++            };
++        }
++
++        for (path, entry) in &current.files {
++            if path != &manifest_path && ink::is_source(path) && path.ends_with("/manifest.json") {
++                let other: Value =
++                    serde_json::from_slice(&read_binary_object(&binary, entry).await?)?;
++                ensure!(
++                    text(&other, "pdfPath")? != pdf_path
++                        && (old_manifest.is_some()
++                            || manifest.get("basePdfHash").is_none()
++                            || text(&other, "pdfPath")? != base_pdf_path),
++                    "PDF belongs to another InkNote"
++                );
++            }
++        }
++        ensure!(files.len() <= 4096, "InkNote exceeds 4096 source files");
++        let old_pdf = old_manifest
++            .as_ref()
++            .map(|m| text(m, "pdfPath").map(str::to_string))
++            .transpose()?
++            .or_else(|| {
++                (manifest.get("basePdfHash").is_some() && base_pdf_path != pdf_path)
++                    .then(|| base_pdf_path.clone())
++            });
++        let pair_paths: BTreeSet<String> = current
++            .files
++            .keys()
++            .chain(previous.files.keys())
++            .chain(files.keys())
++            .filter(|p| p.starts_with(&prefix))
++            .cloned()
++            .chain(std::iter::once(pdf_path.clone()))
++            .chain(old_pdf.clone())
++            .collect();
++        let stale = pair_paths
++            .iter()
++            .any(|p| current.files.get(p) != previous.files.get(p));
++        // Replaying an acknowledged-but-lost publication is safe, including server-derived renderRevision.
++        let deleted_replay = deleting
++            && files.is_empty()
++            && pair_paths.iter().all(|p| !current.files.contains_key(p))
++            && request
++                .changes
++                .iter()
++                .all(|c| matches!(c, ClientChange::Delete { .. }));
++        let same = deleted_replay
++            || !deleting
++                && old_manifest.as_ref().is_some_and(|old| {
++                    let mut old = old.clone();
++                    old.as_object_mut().unwrap().remove("renderRevision");
++                    let mut new = manifest.clone();
++                    new.as_object_mut().unwrap().remove("renderRevision");
++                    old == new
++                })
++                && files
++                    .iter()
++                    .filter(|(p, _)| *p != &manifest_path)
++                    .all(|(p, b)| {
++                        current
++                            .files
++                            .get(p)
++                            .is_some_and(|e| e.sha256 == sha256_hex(b))
++                    })
++                && current
++                    .files
++                    .keys()
++                    .filter(|p| p.starts_with(&prefix))
++                    .all(|p| files.contains_key(p));
++        if stale && !same {
++            let mut remote = Vec::new();
++            for path in &pair_paths {
++                remote.push(match current.files.get(path) {
++                    Some(entry) => ServerFileChange::Upsert {
++                        path: path.clone(),
++                        sha256: entry.sha256.clone(),
++                        size: Some(entry.size),
++                        content_base64: if request.file_content.is_inline() {
++                            Some(STANDARD.encode(read_binary_object(&binary, entry).await?))
++                        } else {
++                            None
++                        },
++                    },
++                    None => ServerFileChange::Delete { path: path.clone() },
++                });
++            }
++            return Ok(SyncResponse {
++                status: SyncStatus::Conflict,
++                server_head: head,
++                files: remote,
++                conflicts: pair_paths
++                    .into_iter()
++                    .map(|path| SyncConflict {
++                        path,
++                        reason: format!("InkNote pair changed: {root}"),
++                    })
++                    .collect(),
++            });
++        }
++        if !same {
++            if old_pdf.as_ref().is_some_and(|p| p != &pdf_path) {
++                ensure!(
++                    !current.files.contains_key(&pdf_path) && !repo.join(&pdf_path).exists(),
++                    "PDF destination already exists"
++                );
++            }
++            let mut next = current.clone();
++            next.files.retain(|p, _| !p.starts_with(&prefix));
++            if let Some(old) = &old_pdf {
++                next.files.remove(old);
++            }
++            if deleting {
++                ensure!(files.is_empty(), "delete the complete InkNote package");
++                next.files.remove(&pdf_path);
++            } else {
++                if let Some(old) = &old_manifest {
++                    ensure!(
++                        integer(&manifest, "sourceRevision")? > integer(old, "sourceRevision")?,
++                        "sourceRevision must advance"
++                    );
++                }
++                let mut base_bytes = None;
++                if let Some(hash) = manifest.get("basePdfHash").and_then(Value::as_str) {
++                    let revision = validate_commit_id(text(&manifest, "basePdfRevision")?)?;
++                    let base_path = manifest
++                        .get("basePdfPath")
++                        .and_then(Value::as_str)
++                        .unwrap_or(&pdf_path);
++                    validate_vault_path(base_path)?;
++                    let (_, original) = self
++                        .file_bytes_at_version(user, vault, base_path, &revision)
++                        .await?;
++                    ensure!(
++                        sha256_hex(&original) == hash,
++                        "annotation base PDF checksum mismatch"
++                    );
++                    if let Some(old) = &old_manifest {
++                        let old_base_path = old
++                            .get("basePdfPath")
++                            .and_then(Value::as_str)
++                            .unwrap_or(text(old, "pdfPath")?);
++                        ensure!(
++                            base_path == old_base_path,
++                            "annotation base path cannot change"
++                        );
++                        ensure!(
++                            old["basePdfHash"] == manifest["basePdfHash"]
++                                && old["basePdfRevision"] == manifest["basePdfRevision"],
++                            "annotation base cannot change"
++                        );
++                        let fixed = |m: &Value| -> Result<Vec<Value>> {
++                            Ok(array(m, "pages")?
++                                .iter()
++                                .map(|p| serde_json::json!([p["id"], p["width"], p["height"]]))
++                                .collect())
++                        };
++                        ensure!(
++                            fixed(old)? == fixed(&manifest)?,
++                            "annotation pages are fixed"
++                        );
++                    } else {
++                        ensure!(
++                            current
++                                .files
++                                .get(&base_pdf_path)
++                                .is_some_and(|e| e.sha256 == hash),
++                            "annotation base changed"
++                        );
++                    }
++                    base_bytes = Some(original);
++                } else {
++                    ensure!(
++                        old_manifest.is_some()
++                            || !current.files.contains_key(&pdf_path)
++                                && !repo.join(&pdf_path).exists(),
++                        "PDF path already exists"
++                    );
++                }
++                for (path, content) in &files {
++                    let rel = path.strip_prefix(&prefix).unwrap();
++                    if let Some(asset) = rel.strip_prefix("assets/") {
++                        let hash = asset.split('.').next().unwrap_or_default();
++                        ensure!(hash == sha256_hex(content), "asset hash/path mismatch");
++                    } else if rel != "manifest.json" {
++                        ensure!(
++                            rel.starts_with("pages/")
++                                && rel.ends_with(".cbor")
++                                && ink::uuid(
++                                    rel.trim_start_matches("pages/").trim_end_matches(".cbor")
++                                ),
++                            "unsupported InkNote package path"
++                        );
++                    }
++                }
++                // Hash all authoritative source content in sorted order; renderRevision itself is excluded.
++                manifest.as_object_mut().unwrap().remove("renderRevision");
++                files.insert(manifest_path.clone(), serde_json::to_vec(&manifest)?);
++                let mut digest = Sha256::new();
++                digest.update(b"InkVault renderer v1\0");
++                for (path, bytes) in &files {
++                    digest.update((path.len() as u64).to_be_bytes());
++                    digest.update(path.as_bytes());
++                    digest.update((bytes.len() as u64).to_be_bytes());
++                    digest.update(bytes);
++                }
++                manifest["renderRevision"] = Value::String(format!("{:x}", digest.finalize()));
++                files.insert(manifest_path.clone(), serde_json::to_vec(&manifest)?);
++                let status_path = self.vault_dir(user, vault).join("inkvault-render.json");
++                durable_write(&status_path,&serde_json::to_vec(&serde_json::json!({"documentId":manifest["documentId"],"sourceRevision":manifest["sourceRevision"],"status":"pending"}))?).await?;
++                let render_manifest = manifest.clone();
++                let render_files = files.clone();
++                let rendered = tokio::task::spawn_blocking(move || {
++                    ink::render(&render_manifest, &render_files, base_bytes.as_deref())
++                })
++                .await?;
++                let pdf = match rendered {
++                    Ok(pdf) => pdf,
++                    Err(error) => {
++                        durable_write(&status_path,&serde_json::to_vec(&serde_json::json!({"documentId":manifest["documentId"],"sourceRevision":manifest["sourceRevision"],"status":"failed","error":error.to_string()}))?).await?;
++                        return Err(anyhow!("InkNote render failed: {error}"));
++                    }
++                };
++                let mtime = integer(&manifest, "modified")?;
++                for (path, content) in &files {
++                    next.files.insert(
++                        path.clone(),
++                        store_binary(&binary, path, content, mtime).await?,
++                    );
++                }
++                next.files.insert(
++                    pdf_path.clone(),
++                    store_binary(&binary, &pdf_path, &pdf, mtime).await?,
++                );
++            }
++            self.publish_inkvault(user, vault, next).await?;
++        }
++        if state.uses_remote() {
++            git(
++                Some(&repo),
++                &[
++                    "push",
++                    "origin",
++                    &format!("HEAD:refs/heads/{}", state.branch),
++                ],
++                &[0],
++            )
++            .await?;
++        }
++        if let Some(head) = self.head_from_repo(&repo).await? {
++            let mut touched = TouchedPaths::default();
++            for change in &request.changes {
++                match change {
++                    ClientChange::Upsert { path, .. } => touched.upserts.push(path.clone()),
++                    ClientChange::Delete { path } => touched.deletes.push(path.clone()),
++                }
++            }
++            self.upsert_device(
++                user,
++                vault,
++                &request.client_id,
++                &request.device_name,
++                &head,
++                &touched,
++            )
++            .await?;
++        }
++        Ok(SyncResponse {
++            status: SyncStatus::Ok,
++            server_head: self.head_from_repo(&repo).await?,
++            files: self
++                .changed_files_since(
++                    &repo,
++                    &binary,
++                    base.as_deref(),
++                    &[],
++                    request.file_content.is_inline(),
++                    true,
++                )
++                .await?,
++            conflicts: vec![],
++        })
++    }
++
++    async fn publish_inkvault(
++        &self,
++        user: &str,
++        vault: &str,
++        manifest: BinaryManifest,
++    ) -> Result<()> {
++        let repo = self.repo_dir(user, vault);
++        let dir = self.vault_dir(user, vault);
++        let old_head = self.head_from_repo(&repo).await?;
++        let index = dir.join("inkvault-index");
++        let _ = fs::remove_file(&index).await;
++        index_git(
++            &repo,
++            &index,
++            &["read-tree", old_head.as_deref().unwrap_or("--empty")],
++        )
++        .await?;
++        let payload = dir.join("inkvault-manifest");
++        durable_write(&payload, &serde_json::to_vec_pretty(&manifest)?).await?;
++        let hash = git(
++            Some(&repo),
++            &[
++                "-c",
++                "core.fsync=all",
++                "hash-object",
++                "-w",
++                path_to_str(&payload)?,
++            ],
++            &[0],
++        )
++        .await?;
++        let hash = String::from_utf8(hash.stdout)?.trim().to_string();
++        index_git(
++            &repo,
++            &index,
++            &[
++                "update-index",
++                "--add",
++                "--cacheinfo",
++                "100644",
++                &hash,
++                BINARY_MANIFEST_PATH,
++            ],
++        )
++        .await?;
++        let tree = index_git(&repo, &index, &["write-tree"]).await?;
++        let mut args = vec![
++            "-c",
++            "core.fsync=all",
++            "commit-tree",
++            tree.trim(),
++            "-m",
++            "sync: publish InkNote source and PDF",
++        ];
++        if let Some(ref parent) = old_head {
++            args.extend(["-p", parent]);
++        }
++        let commit = git(Some(&repo), &args, &[0]).await?;
++        let publication = Publication {
++            old_head,
++            new_head: String::from_utf8(commit.stdout)?.trim().to_string(),
++            manifest,
++        };
++        durable_write(
++            &dir.join("inkvault-publication.json"),
++            &serde_json::to_vec(&publication)?,
++        )
++        .await?;
++        self.recover_inkvault(user, vault).await
++    }
++
++    pub(super) async fn recover_inkvault(&self, user: &str, vault: &str) -> Result<()> {
++        let path = self
++            .vault_dir(user, vault)
++            .join("inkvault-publication.json");
++        let bytes = match fs::read(&path).await {
++            Ok(b) => b,
++            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++            Err(e) => return Err(e.into()),
++        };
++        let publication: Publication = serde_json::from_slice(&bytes)?;
++        let repo = self.repo_dir(user, vault);
++        validate_commit_id(&publication.new_head)?;
++        ensure!(
++            self.binary_manifest_at(&repo, &publication.new_head)
++                .await?
++                == publication.manifest,
++            "InkNote recovery journal differs from committed ledger"
++        );
++        let head = self.head_from_repo(&repo).await?;
++        ensure!(
++            head == publication.old_head || head.as_deref() == Some(&publication.new_head),
++            "InkNote recovery found an unexpected Git head"
++        );
++        if head == publication.old_head {
++            git(
++                Some(&repo),
++                &[
++                    "-c",
++                    "core.fsync=all",
++                    "update-ref",
++                    "HEAD",
++                    &publication.new_head,
++                    publication
++                        .old_head
++                        .as_deref()
++                        .unwrap_or("0000000000000000000000000000000000000000"),
++                ],
++                &[0],
++            )
++            .await?;
++        }
++        write_manifest(&repo, &publication.manifest).await?;
++        git(
++            Some(&repo),
++            &["reset", "HEAD", "--", BINARY_MANIFEST_PATH],
++            &[0],
++        )
++        .await?;
++        durable_write(
++            &self.vault_dir(user, vault).join("inkvault-render.json"),
++            &serde_json::to_vec(
++                &serde_json::json!({"status":"ready","serverHead":publication.new_head}),
++            )?,
++        )
++        .await?;
++        fs::remove_file(&path).await?;
++        std::fs::File::open(path.parent().unwrap())?.sync_all()?;
++        Ok(())
++    }
++}
++
++pub(crate) async fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent).await?;
++    }
++    let tmp = path.with_extension(format!("{}.tmp", random_upload_id()?));
++    let mut file = fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&tmp)
++        .await?;
++    file.write_all(bytes).await?;
++    file.sync_all().await?;
++    drop(file);
++    fs::rename(&tmp, path).await?;
++    std::fs::File::open(path.parent().unwrap())?.sync_all()?;
++    Ok(())
++}
++async fn index_git(repo: &Path, index: &Path, args: &[&str]) -> Result<String> {
++    let output = Command::new("git")
++        .args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsync=all"])
++        .args(args)
++        .env("GIT_INDEX_FILE", index)
++        .env("GIT_TERMINAL_PROMPT", "0")
++        .current_dir(repo)
++        .output()
++        .await?;
++    ensure!(
++        output.status.success(),
++        "InkNote Git transaction failed: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    Ok(String::from_utf8(output.stdout)?)
++}
+diff --git a/rust-server/tests/inkvault_tests.rs b/rust-server/tests/inkvault_tests.rs
+new file mode 100644
+index 0000000..49bc288
+--- /dev/null
++++ b/rust-server/tests/inkvault_tests.rs
+@@ -0,0 +1,904 @@
++use base64::{Engine, engine::general_purpose::STANDARD};
++use obsidian_git_sync_server::{binary_store::sha256_hex, protocol::*, vault::VaultService};
++use serde_json::{Value, json};
++const ROOT: &str = ".inkvault/notes/11111111-1111-4111-8111-111111111111";
++const PAGE: &str = "22222222-2222-4222-8222-222222222222";
++fn cbor(v: &Value) -> Vec<u8> {
++    fn head(t: u8, n: u64) -> Vec<u8> {
++        if n < 24 {
++            vec![t * 32 + n as u8]
++        } else if n <= 255 {
++            vec![t * 32 + 24, n as u8]
++        } else if n <= 65535 {
++            [vec![t * 32 + 25], (n as u16).to_be_bytes().to_vec()].concat()
++        } else {
++            [vec![t * 32 + 26], (n as u32).to_be_bytes().to_vec()].concat()
++        }
++    }
++    match v {
++        Value::Null => vec![246],
++        Value::Bool(b) => vec![if *b { 245 } else { 244 }],
++        Value::Number(n) => head(0, n.as_u64().unwrap()),
++        Value::String(s) => [head(3, s.len() as u64), s.as_bytes().to_vec()].concat(),
++        Value::Array(a) => [head(4, a.len() as u64), a.iter().flat_map(cbor).collect()].concat(),
++        Value::Object(o) => {
++            let mut fields: Vec<_> = o.iter().map(|(k, v)| (cbor(&json!(k)), cbor(v))).collect();
++            fields.sort_by(|a, b| a.0.len().cmp(&b.0.len()).then(a.0.cmp(&b.0)));
++            [
++                head(5, o.len() as u64),
++                fields
++                    .into_iter()
++                    .flat_map(|(k, v)| [k, v].concat())
++                    .collect(),
++            ]
++            .concat()
++        }
++    }
++}
++fn upsert(path: String, bytes: Vec<u8>) -> ClientChange {
++    ClientChange::Upsert {
++        path,
++        sha256: Some(sha256_hex(&bytes)),
++        content_base64: Some(STANDARD.encode(bytes)),
++        upload_id: None,
++        mtime: Some(1),
++    }
++}
++fn changes(rev: i64) -> Vec<ClientChange> {
++    let page = cbor(
++        &json!({"schemaVersion":1,"width":210000,"height":297000,"strokes":[{"id":"s1","points":[[10000,10000,1,1000,null],[90000,90000,2,1000,null]],"style":{"tool":"pen","color":4278190080u64,"width":500,"pressure":true}}],"objects":[],"tombstones":[]}),
++    );
++    let manifest = json!({"schemaVersion":1,"documentId":ROOT.rsplit('/').next().unwrap(),"pdfPath":"Notes/Test.pdf","title":"Test","created":1,"modified":rev,"sourceRevision":rev,"renderRevision":"","pages":[{"id":PAGE,"width":210000,"height":297000,"orientation":"portrait","template":null,"sha256":sha256_hex(&page)}]});
++    vec![
++        upsert(
++            format!("{ROOT}/manifest.json"),
++            serde_json::to_vec(&manifest).unwrap(),
++        ),
++        upsert(format!("{ROOT}/pages/{PAGE}.cbor"), page),
++    ]
++}
++fn request(head: Option<String>, changes: Vec<ClientChange>) -> SyncRequest {
++    SyncRequest {
++        base_head: head,
++        client_id: "inkvault-test".into(),
++        device_name: "InkVault test".into(),
++        changes,
++        client_manifest: vec![],
++        file_content: FileContentMode::Reference,
++    }
++}
++async fn setup() -> (tempfile::TempDir, VaultService, Option<String>) {
++    let dir = tempfile::tempdir().unwrap();
++    let service = VaultService::new_for_tests(dir.path().into());
++    let r = service
++        .register(
++            "alice",
++            "notes",
++            RegisterRequest {
++                remote_url: "".into(),
++                branch: "main".into(),
++                author_name: "Tester".into(),
++                author_email: "test@example.com".into(),
++            },
++        )
++        .await
++        .unwrap();
++    (dir, service, r.server_head)
++}
++#[tokio::test]
++async fn publication_is_paired_replayable_and_conflict_safe() {
++    let (_dir, service, initial) = setup().await;
++    let first = service
++        .sync_inkvault("alice", "notes", request(initial.clone(), changes(1)))
++        .await
++        .unwrap();
++    assert_eq!(first.status, SyncStatus::Ok);
++    assert_eq!(first.files.len(), 3);
++    let pdf = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Notes/Test.pdf",
++            first.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    assert_eq!(
++        lopdf::Document::load_mem(&pdf).unwrap().get_pages().len(),
++        1
++    );
++    let replay = service
++        .sync_inkvault("alice", "notes", request(initial.clone(), changes(1)))
++        .await
++        .unwrap();
++    assert_eq!(replay.server_head, first.server_head);
++    let second = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(first.server_head.clone(), changes(2)),
++        )
++        .await
++        .unwrap();
++    assert_ne!(second.server_head, first.server_head);
++    let conflict = service
++        .sync_inkvault("alice", "notes", request(first.server_head, changes(3)))
++        .await
++        .unwrap();
++    assert_eq!(conflict.status, SyncStatus::Conflict);
++    assert_eq!(conflict.conflicts.len(), 3);
++    assert_eq!(conflict.server_head, second.server_head);
++    // An invalid new page cannot replace either half of the committed note.
++    let mut invalid = changes(4);
++    invalid[1] = upsert(format!("{ROOT}/pages/{PAGE}.cbor"), vec![255]);
++    assert!(
++        service
++            .sync_inkvault(
++                "alice",
++                "notes",
++                request(second.server_head.clone(), invalid)
++            )
++            .await
++            .is_err()
++    );
++    let after = service
++        .sync_inkvault("alice", "notes", request(None, vec![]))
++        .await
++        .unwrap();
++    assert_eq!(after.server_head, second.server_head);
++    assert!(
++        service
++            .sync(
++                "alice",
++                "notes",
++                request(
++                    second.server_head.clone(),
++                    vec![upsert("Notes/Test.pdf".into(), b"bad".to_vec())]
++                )
++            )
++            .await
++            .is_err()
++    );
++    // Fixed source inputs render exactly the same bytes.
++    let pdf2 = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Notes/Test.pdf",
++            second.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    assert_eq!(pdf, pdf2);
++}
++#[tokio::test]
++async fn incomplete_upload_never_publishes_and_can_resume() {
++    let (_dir, service, head) = setup().await;
++    let mut changes = changes(1);
++    let (path, bytes, sha) = match &changes[1] {
++        ClientChange::Upsert {
++            path,
++            content_base64,
++            sha256,
++            ..
++        } => (
++            path.clone(),
++            STANDARD.decode(content_base64.as_ref().unwrap()).unwrap(),
++            sha256.clone().unwrap(),
++        ),
++        _ => unreachable!(),
++    };
++    let upload = service
++        .init_upload(
++            "alice",
++            "notes",
++            UploadInitRequest {
++                path: path.clone(),
++                sha256: sha.clone(),
++                size: bytes.len() as u64,
++            },
++        )
++        .await
++        .unwrap();
++    changes[1] = ClientChange::Upsert {
++        path,
++        content_base64: None,
++        upload_id: Some(upload.upload_id.clone()),
++        sha256: Some(sha),
++        mtime: Some(1),
++    };
++    assert!(
++        service
++            .sync_inkvault("alice", "notes", request(head.clone(), changes.clone()))
++            .await
++            .is_err()
++    );
++    assert_eq!(
++        service
++            .sync_inkvault("alice", "notes", request(None, vec![]))
++            .await
++            .unwrap()
++            .server_head,
++        head
++    );
++    service
++        .append_upload_chunk(
++            "alice",
++            "notes",
++            &upload.upload_id,
++            UploadChunkRequest {
++                offset: 0,
++                content_base64: STANDARD.encode(&bytes),
++            },
++        )
++        .await
++        .unwrap();
++    service
++        .complete_upload("alice", "notes", &upload.upload_id)
++        .await
++        .unwrap();
++    assert_eq!(
++        service
++            .sync_inkvault("alice", "notes", request(head, changes))
++            .await
++            .unwrap()
++            .status,
++        SyncStatus::Ok
++    );
++}
++
++#[tokio::test]
++async fn recovers_publication_before_and_after_git_ref_update() {
++    use obsidian_git_sync_server::{
++        binary_store::{BINARY_MANIFEST_PATH, read_manifest},
++        git::git,
++    };
++    let (dir, service, initial) = setup().await;
++    let first = service
++        .sync_inkvault("alice", "notes", request(initial, changes(1)))
++        .await
++        .unwrap();
++    let second = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(first.server_head.clone(), changes(2)),
++        )
++        .await
++        .unwrap();
++    let vault = dir.path().join("users/alice/vaults/notes");
++    let repo = vault.join("repo");
++    let ledger = read_manifest(&repo).await.unwrap();
++    let journal =
++        json!({"old_head":first.server_head,"new_head":second.server_head,"manifest":ledger});
++    for moved in [false, true] {
++        git(
++            Some(&repo),
++            &["reset", "--hard", first.server_head.as_ref().unwrap()],
++            &[0],
++        )
++        .await
++        .unwrap();
++        if moved {
++            git(
++                Some(&repo),
++                &["update-ref", "HEAD", second.server_head.as_ref().unwrap()],
++                &[0],
++            )
++            .await
++            .unwrap();
++        }
++        std::fs::write(
++            vault.join("inkvault-publication.json"),
++            serde_json::to_vec(&journal).unwrap(),
++        )
++        .unwrap();
++        let restarted = VaultService::new_for_tests(dir.path().into());
++        let response = restarted
++            .sync_inkvault("alice", "notes", request(None, vec![]))
++            .await
++            .unwrap();
++        assert_eq!(response.server_head, second.server_head);
++        assert_eq!(read_manifest(&repo).await.unwrap(), ledger);
++        assert!(!vault.join("inkvault-publication.json").exists());
++        assert_eq!(
++            git(
++                Some(&repo),
++                &["diff", "--name-only", "HEAD", "--", BINARY_MANIFEST_PATH],
++                &[0]
++            )
++            .await
++            .unwrap()
++            .stdout,
++            b""
++        );
++    }
++}
++
++#[tokio::test]
++async fn native_visibility_dav_guards_and_compare_and_swap_resolution() {
++    use axum::{
++        body::{Body, to_bytes},
++        http::Request,
++    };
++    use obsidian_git_sync_server::{
++        auth::AuthVerifier,
++        http::{AppState, PublicAuthConfig, router},
++        vault::dav::DavDevice,
++    };
++    use tower::ServiceExt;
++    let (_dir, service, initial) = setup().await;
++    let first = service
++        .sync_inkvault("alice", "notes", request(initial, changes(1)))
++        .await
++        .unwrap();
++    let listed = service.dav_list("alice", "notes", "").await.unwrap();
++    assert!(listed.iter().all(|e| !e.path.starts_with('.')));
++    assert!(service.dav_stat("alice", "notes", ROOT).await.is_err());
++    assert!(
++        service
++            .dav_delete(
++                "alice",
++                "notes",
++                "Notes",
++                &DavDevice {
++                    client_id: "dav".into(),
++                    name: "DAV".into()
++                }
++            )
++            .await
++            .is_err()
++    );
++    let second = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(first.server_head.clone(), changes(2)),
++        )
++        .await
++        .unwrap();
++    assert!(
++        service
++            .resolve_inkvault("alice", "notes", request(first.server_head, changes(3)))
++            .await
++            .is_err()
++    );
++    assert_eq!(
++        service
++            .resolve_inkvault("alice", "notes", request(second.server_head, changes(3)))
++            .await
++            .unwrap()
++            .status,
++        SyncStatus::Ok
++    );
++    let app = router(
++        AppState::new(
++            service,
++            AuthVerifier::StaticTokenForDev {
++                token: "secret".into(),
++                user: "alice".into(),
++            },
++            PublicAuthConfig::Token,
++        ),
++        1024 * 1024,
++        vec![],
++    );
++    for native in [false, true] {
++        let mut req = Request::builder()
++            .method("POST")
++            .uri("/v1/users/alice/vaults/notes/sync")
++            .header("authorization", "Bearer secret")
++            .header("content-type", "application/json");
++        if native {
++            req = req.header("x-obsidisync-client-features", "inkVaultNotesV1");
++        }
++        let response = app
++            .clone()
++            .oneshot(
++                req.body(Body::from(
++                    serde_json::to_vec(&request(None, vec![])).unwrap(),
++                ))
++                .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(response.status(), 200);
++        let body: Value =
++            serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
++                .unwrap();
++        let files = body["files"].as_array().unwrap();
++        assert_eq!(files.len(), if native { 3 } else { 1 });
++        assert!(files.iter().any(|f| f["path"] == "Notes/Test.pdf"));
++    }
++}
++
++#[tokio::test]
++async fn annotation_preserves_original_pdf_and_pair_deletion_is_atomic() {
++    let (_dir, service, initial) = setup().await;
++    let first = service
++        .sync_inkvault("alice", "notes", request(initial, changes(1)))
++        .await
++        .unwrap();
++    let pdf = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Notes/Test.pdf",
++            first.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    // Import an ordinary PDF, then annotate that exact base revision.
++    let imported = service
++        .sync(
++            "alice",
++            "notes",
++            request(
++                first.server_head,
++                vec![upsert("Imported.pdf".into(), pdf.clone())],
++            ),
++        )
++        .await
++        .unwrap();
++    let new_root = ".inkvault/notes/33333333-3333-4333-8333-333333333333";
++    let mut annotation = changes(1);
++    for change in &mut annotation {
++        if let ClientChange::Upsert {
++            path,
++            content_base64,
++            sha256,
++            ..
++        } = change
++        {
++            *path = path.replace(ROOT, new_root);
++            if path.ends_with("manifest.json") {
++                let mut m: Value = serde_json::from_slice(
++                    &STANDARD.decode(content_base64.as_ref().unwrap()).unwrap(),
++                )
++                .unwrap();
++                m["documentId"] = json!(new_root.rsplit('/').next().unwrap());
++                m["pdfPath"] = json!("Imported.pdf");
++                m["basePdfHash"] = json!(sha256_hex(&pdf));
++                m["basePdfRevision"] = Value::Null;
++                let bytes = serde_json::to_vec(&m).unwrap();
++                *sha256 = Some(sha256_hex(&bytes));
++                *content_base64 = Some(STANDARD.encode(bytes));
++            }
++        }
++    }
++    let result = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(imported.server_head.clone(), annotation.clone()),
++        )
++        .await
++        .unwrap();
++    let replay = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(imported.server_head.clone(), annotation),
++        )
++        .await
++        .unwrap();
++    assert_eq!(replay.server_head, result.server_head);
++    let saved_source = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            &format!("{new_root}/manifest.json"),
++            result.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    assert_eq!(
++        serde_json::from_slice::<Value>(&saved_source).unwrap()["basePdfRevision"],
++        json!(imported.server_head)
++    );
++    let annotated = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Imported.pdf",
++            result.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    let doc = lopdf::Document::load_mem(&annotated).unwrap();
++    let content = doc.get_page_content(*doc.get_pages().values().next().unwrap());
++    assert!(
++        String::from_utf8_lossy(&content)
++            .matches("90000 90000 l S")
++            .count()
++            >= 2
++    );
++    let deletion = vec![
++        ClientChange::Delete {
++            path: format!("{new_root}/manifest.json"),
++        },
++        ClientChange::Delete {
++            path: format!("{new_root}/pages/{PAGE}.cbor"),
++        },
++    ];
++    let deleted = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(result.server_head.clone(), deletion.clone()),
++        )
++        .await
++        .unwrap();
++    assert_eq!(deleted.status, SyncStatus::Ok);
++    let replay = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(result.server_head.clone(), deletion),
++        )
++        .await
++        .unwrap();
++    assert_eq!(replay.server_head, deleted.server_head);
++
++    assert!(
++        service
++            .file_bytes_at_version(
++                "alice",
++                "notes",
++                "Imported.pdf",
++                deleted.server_head.as_ref().unwrap()
++            )
++            .await
++            .is_err()
++    );
++    assert!(
++        service
++            .file_bytes_at_version(
++                "alice",
++                "notes",
++                "Imported.pdf",
++                result.server_head.as_ref().unwrap()
++            )
++            .await
++            .is_ok()
++    );
++}
++
++#[test]
++fn renders_png_svg_and_vector_pdf_templates_without_flattening_pdf_content() {
++    use obsidian_git_sync_server::inkvault;
++    use std::collections::BTreeMap;
++    let package = changes(1);
++    let mut files: BTreeMap<String, Vec<u8>> = package
++        .iter()
++        .map(|c| match c {
++            ClientChange::Upsert {
++                path,
++                content_base64,
++                ..
++            } => (
++                path.clone(),
++                STANDARD.decode(content_base64.as_ref().unwrap()).unwrap(),
++            ),
++            _ => unreachable!(),
++        })
++        .collect();
++    let mut manifest: Value =
++        serde_json::from_slice(&files[&format!("{ROOT}/manifest.json")]).unwrap();
++    let base = inkvault::render(&manifest, &files, None).unwrap();
++    let template = format!("{ROOT}/assets/{}.pdf", sha256_hex(&base));
++    files.insert(template.clone(), base);
++    manifest["pages"][0]["template"] = json!({"asset":template,"page":0});
++    let svg=b"<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><rect width='20' height='20' fill='red'/></svg>".to_vec();
++    let svg_path = format!("{ROOT}/assets/{}.svg", sha256_hex(&svg));
++    files.insert(svg_path.clone(), svg);
++    let mut png = std::io::Cursor::new(Vec::new());
++    image::DynamicImage::new_rgba8(20, 20)
++        .write_to(&mut png, image::ImageFormat::Png)
++        .unwrap();
++    let png_path = format!("{ROOT}/assets/{}.png", sha256_hex(png.get_ref()));
++    files.insert(png_path.clone(), png.into_inner());
++    let page = cbor(
++        &json!({"schemaVersion":1,"width":210000,"height":297000,"strokes":[],"tombstones":[],"objects":[{"id":"a","asset":svg_path,"x":1000,"y":1000,"width":20000,"height":20000},{"id":"b","asset":png_path,"x":30000,"y":1000,"width":20000,"height":20000}]}),
++    );
++    manifest["pages"][0]["sha256"] = json!(sha256_hex(&page));
++    files.insert(format!("{ROOT}/pages/{PAGE}.cbor"), page);
++    let rendered = inkvault::render(&manifest, &files, None).unwrap();
++    let doc = lopdf::Document::load_mem(&rendered).unwrap();
++    assert!(
++        doc.objects
++            .values()
++            .filter_map(|o| o.as_stream().ok())
++            .any(
++                |s| s.dict.get(b"Subtype").and_then(lopdf::Object::as_name).ok() == Some(b"Form")
++                    && String::from_utf8_lossy(&s.content).contains("90000 90000 l S")
++            )
++    );
++    assert_eq!(rendered, inkvault::render(&manifest, &files, None).unwrap());
++}
++
++#[tokio::test]
++async fn publishes_500_pages_with_mixed_a4_orientations() {
++    let (_dir, service, head) = setup().await;
++    let mut changes = changes(1);
++    let mut manifest: Value = match &changes[0] {
++        ClientChange::Upsert { content_base64, .. } => {
++            serde_json::from_slice(&STANDARD.decode(content_base64.as_ref().unwrap()).unwrap())
++                .unwrap()
++        }
++        _ => unreachable!(),
++    };
++    changes.clear();
++    let mut pages = Vec::new();
++    for i in 0..500 {
++        let id = format!("22222222-2222-4222-8222-{i:012}");
++        let (w, h) = if i % 2 == 0 {
++            (210000, 297000)
++        } else {
++            (297000, 210000)
++        };
++        let bytes = cbor(
++            &json!({"schemaVersion":1,"width":w,"height":h,"strokes":[],"objects":[],"tombstones":[]}),
++        );
++        pages.push(json!({"id":id,"width":w,"height":h,"orientation":if w>h{"landscape"}else{"portrait"},"template":null,"sha256":sha256_hex(&bytes)}));
++        changes.push(upsert(format!("{ROOT}/pages/{id}.cbor"), bytes));
++    }
++    manifest["pages"] = json!(pages);
++    changes.push(upsert(
++        format!("{ROOT}/manifest.json"),
++        serde_json::to_vec(&manifest).unwrap(),
++    ));
++    let result = service
++        .sync_inkvault("alice", "notes", request(head, changes))
++        .await
++        .unwrap();
++    let pdf = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Notes/Test.pdf",
++            result.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    assert_eq!(
++        lopdf::Document::load_mem(&pdf).unwrap().get_pages().len(),
++        500
++    );
++}
++
++#[tokio::test]
++async fn rename_publishes_source_and_pdf_together_and_rejects_collisions() {
++    let (_dir, service, initial) = setup().await;
++    let first = service
++        .sync_inkvault("alice", "notes", request(initial, changes(1)))
++        .await
++        .unwrap();
++    let mut renamed = changes(2);
++    if let ClientChange::Upsert { content_base64, .. } = &renamed[0] {
++        let mut manifest: Value =
++            serde_json::from_slice(&STANDARD.decode(content_base64.as_ref().unwrap()).unwrap())
++                .unwrap();
++        manifest["pdfPath"] = json!("Moved/Renamed.pdf");
++        manifest["title"] = json!("Renamed");
++        renamed[0] = upsert(
++            format!("{ROOT}/manifest.json"),
++            serde_json::to_vec(&manifest).unwrap(),
++        );
++    }
++    let second = service
++        .sync_inkvault(
++            "alice",
++            "notes",
++            request(first.server_head.clone(), renamed.clone()),
++        )
++        .await
++        .unwrap();
++    assert_eq!(second.status, SyncStatus::Ok);
++    assert!(
++        service
++            .file_bytes_at_version(
++                "alice",
++                "notes",
++                "Notes/Test.pdf",
++                second.server_head.as_ref().unwrap()
++            )
++            .await
++            .is_err()
++    );
++    let pdf = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Moved/Renamed.pdf",
++            second.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    assert_eq!(
++        lopdf::Document::load_mem(&pdf).unwrap().get_pages().len(),
++        1
++    );
++    let replay = service
++        .sync_inkvault("alice", "notes", request(first.server_head, renamed))
++        .await
++        .unwrap();
++    assert_eq!(replay.server_head, second.server_head);
++    let occupied = service
++        .sync(
++            "alice",
++            "notes",
++            request(
++                second.server_head,
++                vec![upsert("Notes/Test.pdf".into(), pdf)],
++            ),
++        )
++        .await
++        .unwrap();
++    assert!(
++        service
++            .sync_inkvault(
++                "alice",
++                "notes",
++                request(occupied.server_head.clone(), changes(3))
++            )
++            .await
++            .is_err()
++    );
++    assert_eq!(
++        service
++            .sync_inkvault("alice", "notes", request(None, vec![]))
++            .await
++            .unwrap()
++            .server_head,
++        occupied.server_head
++    );
++}
++
++#[tokio::test]
++async fn annotation_can_move_before_first_publication_and_keeps_its_original_base() {
++    let (_dir, service, initial) = setup().await;
++    let first = service
++        .sync_inkvault("alice", "notes", request(initial, changes(1)))
++        .await
++        .unwrap();
++    let pdf = service
++        .file_bytes_at_version(
++            "alice",
++            "notes",
++            "Notes/Test.pdf",
++            first.server_head.as_ref().unwrap(),
++        )
++        .await
++        .unwrap()
++        .1;
++    let imported = service
++        .sync(
++            "alice",
++            "notes",
++            request(
++                first.server_head,
++                vec![upsert("Imported.pdf".into(), pdf.clone())],
++            ),
++        )
++        .await
++        .unwrap();
++    let root = ".inkvault/notes/33333333-3333-4333-8333-333333333333";
++    let mut head = imported.server_head;
++    for (rev, destination) in [(1, "Moved/Annotation.pdf"), (2, "Moved/Again.pdf")] {
++        let mut package = changes(rev);
++        for change in &mut package {
++            if let ClientChange::Upsert {
++                path,
++                content_base64,
++                sha256,
++                ..
++            } = change
++            {
++                *path = path.replace(ROOT, root);
++                if path.ends_with("manifest.json") {
++                    let mut manifest: Value = serde_json::from_slice(
++                        &STANDARD.decode(content_base64.as_ref().unwrap()).unwrap(),
++                    )
++                    .unwrap();
++                    manifest["documentId"] = json!(root.rsplit('/').next().unwrap());
++                    manifest["pdfPath"] = json!(destination);
++                    manifest["basePdfPath"] = json!("Imported.pdf");
++                    manifest["basePdfHash"] = json!(sha256_hex(&pdf));
++                    manifest["basePdfRevision"] = Value::Null;
++                    let bytes = serde_json::to_vec(&manifest).unwrap();
++                    *sha256 = Some(sha256_hex(&bytes));
++                    *content_base64 = Some(STANDARD.encode(bytes));
++                }
++            }
++        }
++        let published = service
++            .sync_inkvault("alice", "notes", request(head, package))
++            .await
++            .unwrap();
++        assert_eq!(published.status, SyncStatus::Ok);
++        head = published.server_head;
++        let rendered = service
++            .file_bytes_at_version("alice", "notes", destination, head.as_ref().unwrap())
++            .await
++            .unwrap()
++            .1;
++        assert_eq!(
++            lopdf::Document::load_mem(&rendered)
++                .unwrap()
++                .get_pages()
++                .len(),
++            1
++        );
++        assert!(
++            service
++                .file_bytes_at_version("alice", "notes", "Imported.pdf", head.as_ref().unwrap())
++                .await
++                .is_err()
++        );
++    }
++}
++
++#[tokio::test]
++async fn deleting_an_offline_only_note_is_an_idempotent_noop() {
++    let (_dir, service, head) = setup().await;
++    let deletes = vec![
++        ClientChange::Delete {
++            path: format!("{ROOT}/manifest.json"),
++        },
++        ClientChange::Delete {
++            path: format!("{ROOT}/pages/{PAGE}.cbor"),
++        },
++    ];
++    for _ in 0..2 {
++        let result = service
++            .sync_inkvault("alice", "notes", request(head.clone(), deletes.clone()))
++            .await
++            .unwrap();
++        assert_eq!(result.status, SyncStatus::Ok);
++        assert_eq!(result.server_head, head);
++    }
++}
++
++#[test]
++fn pressure_sensitive_marker_retains_transparency_and_variable_width() {
++    use obsidian_git_sync_server::inkvault;
++    use std::collections::BTreeMap;
++    let mut files: BTreeMap<String, Vec<u8>> = changes(1)
++        .iter()
++        .map(|c| match c {
++            ClientChange::Upsert {
++                path,
++                content_base64,
++                ..
++            } => (
++                path.clone(),
++                STANDARD.decode(content_base64.as_ref().unwrap()).unwrap(),
++            ),
++            _ => unreachable!(),
++        })
++        .collect();
++    let mut manifest: Value =
++        serde_json::from_slice(&files[&format!("{ROOT}/manifest.json")]).unwrap();
++    let page = cbor(
++        &json!({"schemaVersion":1,"width":210000,"height":297000,"strokes":[{"id":"marker","points":[[10000,10000,1,500,null],[20000,20000,2,500,null],[30000,30000,3,1000,null]],"style":{"tool":"marker","color":4294967040u64,"width":4000,"pressure":true}}],"objects":[],"tombstones":[]}),
++    );
++    manifest["pages"][0]["sha256"] = json!(sha256_hex(&page));
++    files.insert(format!("{ROOT}/pages/{PAGE}.cbor"), page);
++    let bytes = inkvault::render(&manifest, &files, None).unwrap();
++    let doc = lopdf::Document::load_mem(&bytes).unwrap();
++    let content = String::from_utf8(
++        doc.get_page_content(*doc.get_pages().values().next().unwrap()),
++    )
++    .unwrap();
++    assert!(content.contains("2000 w"));
++    assert!(content.contains("4000 w"));
++    assert!(content.contains(" gs"));
++}

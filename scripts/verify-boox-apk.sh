@@ -4,6 +4,7 @@ set -eu
 apk="${1:?APK path is required}"
 expected_version="${2:-}"
 signature_mode="${3:-unsigned}"
+application_id="${4:-de.tobisk.inkdav}"
 
 if [ ! -f "$apk" ]; then
   echo "APK not found: $apk" >&2
@@ -28,7 +29,7 @@ for tool in "$aapt" "$zipalign" "$apksigner"; do
 done
 
 badging=$($aapt dump badging "$apk")
-echo "$badging" | grep -F "package: name='de.tobisk.inkdav'" >/dev/null
+echo "$badging" | grep -F "package: name='$application_id'" >/dev/null
 echo "$badging" | grep -F "sdkVersion:'26'" >/dev/null
 echo "$badging" | grep -F "targetSdkVersion:'36'" >/dev/null
 

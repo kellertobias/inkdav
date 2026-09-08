@@ -1,0 +1,15 @@
+<resources>
+    <style name="InkVaultTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorControlNormal">#000000</item>
+        <item name="android:textColorPrimary">#000000</item>
+        <item name="android:textColorSecondary">#000000</item>
+        <item name="android:colorButtonNormal">#FFFFFF</item>
+        <item name="android:colorBackgroundFloating">#FFFFFF</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>
