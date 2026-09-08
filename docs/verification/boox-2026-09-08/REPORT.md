@@ -117,3 +117,6 @@ The installed build resolves the actual firmware methods. All 12 device tests,
 360 submissions; the maximum real submission call was 8.091198 ms. This measures
 API overhead, not pencil-to-visible-ink latency. Physical comparison against
 BOOX Notes remains outstanding. Existing notes and recordings were retained.
+
+The user confirmed the installed build works after the active-tool and firmware
+access changes. This is user acceptance, not a quantified latency measurement.
