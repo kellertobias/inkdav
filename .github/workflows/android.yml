@@ -34,17 +34,23 @@ jobs:
       - name: Install Android platform
         run: sdkmanager "platforms;android-36"
 
-      - name: Verify and assemble
-        run: ./gradlew --no-daemon ktlintCheck testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease
+      - name: Verify all four applications and BOOX dependencies
+        run: >-
+          ./gradlew --no-daemon
+          :app:ktlintCheck :inkvault:ktlintCheck
+          :app:testCalendarDebugUnitTest :app:testTodosDebugUnitTest :app:testFilesDebugUnitTest
+          :inkvault:testDebugUnitTest :inkvault:verifyBooxDependencies
+          :app:lintCalendarDebug :app:lintCalendarRelease
+          :app:lintTodosDebug :app:lintTodosRelease
+          :app:lintFilesDebug :app:lintFilesRelease
+          :inkvault:lintDebug :inkvault:lintRelease
+          :app:assembleCalendarDebug :app:assembleCalendarRelease
+          :app:assembleTodosDebug :app:assembleTodosRelease
+          :app:assembleFilesDebug :app:assembleFilesRelease
+          :inkvault:assembleDebug :inkvault:assembleRelease
 
       - name: Verify BOOX-compatible APKs
-        run: |
-          ./scripts/verify-boox-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk "" unsigned
-          ./scripts/verify-boox-apk.sh app/build/outputs/apk/debug/app-debug.apk "" signed
-          ./scripts/verify-boox-apk.sh inkvault/build/outputs/apk/debug/inkvault-debug.apk "" signed de.tobisk.inkvault
-          ./scripts/verify-boox-apk.sh inkvault/build/outputs/apk/release/inkvault-release-unsigned.apk "" unsigned de.tobisk.inkvault
-          mkdir -p dist/ci
-          cp app/build/outputs/apk/debug/app-debug.apk dist/ci/InkDAV-main-boox-note-air5c-debug.apk
+        run: sh ./scripts/verify-ci-apks.sh
 
       - name: Upload InkVault test APK
         uses: actions/upload-artifact@v7
@@ -54,11 +60,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload installable BOOX test APK
+      - name: Upload all four installable BOOX test APKs
         uses: actions/upload-artifact@v7
         with:
-          name: inkdav-debug-${{ github.sha }}
-          path: dist/ci/InkDAV-main-boox-note-air5c-debug.apk
+          name: inkdav-apps-debug-${{ github.sha }}
+          path: dist/ci/*-main-boox-note-air5c-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -97,7 +103,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-boot-timeout: 300
-          script: ./gradlew --no-daemon connectedDebugAndroidTest
+          script: ./gradlew --no-daemon connectedCalendarDebugAndroidTest
 
   analyze:
     runs-on: ubuntu-latest
@@ -130,7 +136,10 @@ jobs:
           build-mode: manual
 
       - name: Compile for CodeQL
-        run: ./gradlew --no-daemon compileDebugKotlin
+        run: >-
+          ./gradlew --no-daemon
+          :app:compileCalendarDebugKotlin :app:compileTodosDebugKotlin :app:compileFilesDebugKotlin
+          :inkvault:compileDebugKotlin
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4.37.9

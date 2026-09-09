@@ -1,6 +1,13 @@
-# InkDAV
+# InkDAV applications
 
-InkDAV is an offline-first CalDAV, VTODO, and WebDAV client designed for large Android e-ink tablets, with the BOOX Note Air 5 C as its primary target.
+InkDAV is a suite of four offline-first Android applications designed for large e-ink tablets, with the BOOX Note Air 5 C as its primary target:
+
+- **InkDAV Calendar** — CalDAV events, calendar views, and the calendar widget (`de.tobisk.inkdav`).
+- **InkDAV Todos** — VTODO lists, schedules, editing, and the todo widget (`de.tobisk.inkdav.todos`).
+- **InkDAV Files** — NASDrive/WebDAV browsing, previews, mirrors, and Android DocumentsProvider access (`de.tobisk.inkdav.files`).
+- **InkVault** — an Obsidian-compatible Markdown, PDF, audio, and handwriting workspace (`de.tobisk.inkvault`).
+
+Each application has its own local feature cache and sync schedule. Server Setup is shared across the suite: server additions, credential changes, copies, and removals are replicated to the other installed applications through a signature-protected Android provider. Apps signed by another key cannot read it. Calendar keeps the original InkDAV package ID so an existing installation upgrades in place and supplies its configured servers to newly installed Todos and Files apps.
 
 The UI uses opaque paper-colored surfaces, strong outlines, redundant text status, and page-style navigation. It intentionally avoids shadows, gradients, animated transitions, continuously moving indicators, and color-only state.
 
@@ -38,24 +45,39 @@ and its release artifacts use `InkVault-vVERSION-boox-note-air5c.apk`.
 Requirements: JDK 17 and Android SDK platform 36.
 
 ```sh
-JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk ./gradlew testDebugUnitTest assembleDebug lintDebug
+JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk ./gradlew \
+  testCalendarDebugUnitTest testTodosDebugUnitTest testFilesDebugUnitTest \
+  :inkvault:testDebugUnitTest :inkvault:verifyBooxDependencies \
+  assembleDebug assembleRelease
 ```
 
 Canonical development checks:
 
 ```sh
 ./gradlew ktlintFormat
-./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug
+./gradlew ktlintCheck testCalendarDebugUnitTest testTodosDebugUnitTest testFilesDebugUnitTest \
+  :inkvault:testDebugUnitTest :inkvault:verifyBooxDependencies \
+  lintCalendarDebug lintTodosDebug lintFilesDebug :inkvault:lintDebug \
+  assembleDebug assembleRelease
+sh ./scripts/verify-ci-apks.sh
 ```
 
 GitHub Actions runs formatting, JVM tests, debug/release lint, debug and minified release builds, Room migration and DAV contract tests on an Android 15 emulator, CodeQL, and an explicit BOOX compatibility check. Every successful main-branch run retains an installable debug APK for the Note Air5 C. A successful push run then gates the signed semantic-release transaction; see [docs/RELEASING.md](docs/RELEASING.md).
 
-The local debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Hosted releases provide `InkDAV-vVERSION-boox-note-air5c.apk`, a signed universal APK with ARM64 native libraries for the Android 15 Note Air5 C.
+The local debug APKs are written to:
+
+- `app/build/outputs/apk/calendar/debug/app-calendar-debug.apk`
+- `app/build/outputs/apk/todos/debug/app-todos-debug.apk`
+- `app/build/outputs/apk/files/debug/app-files-debug.apk`
+
+Hosted releases provide matching `InkDAV-Calendar`, `InkDAV-Todos`, `InkDAV-Files`, and `InkVault` signed universal APKs with ARM64 native libraries for the Android 15 Note Air5 C.
 
 To install on a USB- or network-ADB-connected BOOX tablet:
 
 ```sh
-ANDROID_HOME=/path/to/android-sdk "$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
+ANDROID_HOME=/path/to/android-sdk "$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/calendar/debug/app-calendar-debug.apk
+ANDROID_HOME=/path/to/android-sdk "$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/todos/debug/app-todos-debug.apk
+ANDROID_HOME=/path/to/android-sdk "$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/files/debug/app-files-debug.apk
 ```
 
 ## NASDrive

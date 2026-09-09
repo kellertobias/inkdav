@@ -5,6 +5,7 @@ apk="${1:?APK path is required}"
 expected_version="${2:-}"
 signature_mode="${3:-unsigned}"
 application_id="${4:-de.tobisk.inkdav}"
+runtime_profile="${5:-standard}"
 
 if [ ! -f "$apk" ]; then
   echo "APK not found: $apk" >&2
@@ -45,6 +46,29 @@ done
 $zipalign -c -P 16 4 "$apk"
 if [ "$signature_mode" = "signed" ]; then
   $apksigner verify --verbose --print-certs "$apk"
+fi
+
+if [ "$runtime_profile" = "inkvault" ]; then
+  dex_dir=$(mktemp -d)
+  trap 'rm -rf "$dex_dir"' EXIT
+  unzip -qq "$apk" 'classes*.dex' -d "$dex_dir"
+  for class_name in \
+    com/onyx/android/sdk/api/device/epd/EpdController \
+    com/onyx/android/sdk/pen/TouchHelper \
+    org/lsposed/hiddenapibypass/LSPass
+  do
+    found=false
+    for dex in "$dex_dir"/classes*.dex; do
+      if LC_ALL=C grep -a -F "$class_name" "$dex" >/dev/null; then
+        found=true
+        break
+      fi
+    done
+    if [ "$found" != true ]; then
+      echo "Required InkVault BOOX runtime class is missing: $class_name" >&2
+      exit 2
+    fi
+  done
 fi
 
 echo "Verified BOOX Note Air5 C APK: Android 15 compatible, ARM64 native libraries present, version ${expected_version:-from manifest}."

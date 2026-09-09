@@ -15,7 +15,7 @@ object BooxFirmware {
         try {
             if (Build.VERSION.SDK_INT >= 28) {
                 // App-process-only access to the OEM namespace; no blanket framework exemption.
-                check(LSPass.addHiddenApiExemptions("Landroid/onyx/"))
+                check(LSPass.addHiddenApiExemptions("Landroid/onyx/", "Landroid/view/View;->refreshScreen"))
             }
             Class.forName("android.onyx.ViewUpdateHelper").getDeclaredMethod(
                 "moveTo",

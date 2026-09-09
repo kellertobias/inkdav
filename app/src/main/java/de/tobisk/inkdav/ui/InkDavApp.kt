@@ -20,7 +20,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +36,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -73,6 +73,7 @@ private val Paper = Color(0xfffaf9f4)
 private val Ink = Color(0xff111111)
 private val MutedInk = Color(0xff4b5563)
 private val Rule = Color(0xff59636e)
+private val TimeDivider = Color(0xffadb3b8)
 private val Accent = Color(0xff294c60)
 private val Warning = Color(0xff7a351b)
 private val CurrentTime = Color(0xffb3261e)
@@ -107,6 +108,7 @@ fun InkDavApp(model: MainViewModel) {
     val editingOccurrence by model.editingOccurrence.collectAsStateWithLifecycle()
     val editingTask by model.editingTask.collectAsStateWithLifecycle()
     val manualSyncState by model.manualSyncState.collectAsStateWithLifecycle()
+    val featureAccounts = accounts.filter { model.appFeature.accepts(it.kind) }
 
     MaterialTheme(
         colorScheme = lightColorScheme(primary = Accent, onPrimary = Paper, background = Paper, surface = Paper, onSurface = Ink),
@@ -123,39 +125,85 @@ fun InkDavApp(model: MainViewModel) {
                     .windowInsetsTopHeight(WindowInsets.statusBars)
                     .background(Ink)
             )
-            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                TopNavigation(destination) { model.destination.value = it }
-                if (destination == Destination.CALENDAR) {
-                    CalendarHeader(model, selectedDate, calendarMode, collections, settings.hiddenCalendarIds, pending, accounts, manualSyncState)
-                } else {
-                    AppHeader(destination.label, pending, accounts, manualSyncState, model::sync)
-                }
-                Box(Modifier.fillMaxWidth().weight(1f, fill = true)) {
-                    when (destination) {
-                        Destination.CALENDAR -> CalendarScreen(
+            Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                when (model.appFeature) {
+                    AppFeature.CALENDAR -> Column(Modifier.fillMaxSize()) {
+                        CalendarHeader(
                             model,
                             selectedDate,
                             calendarMode,
-                            events.filterNot {
-                                it.collectionId in
-                                    settings.hiddenCalendarIds
-                            },
                             collections,
-                            settings
-                        )
-                        Destination.TASKS -> TasksScreen(model, scheduledTasks, tasks, collections)
-                        Destination.FILES -> FilesScreen(model, files, mirrorFiles, collections, settings)
-                        Destination.SYNC -> SyncScreen(
+                            settings.hiddenCalendarIds,
+                            pending,
+                            featureAccounts,
+                            manualSyncState,
+                            destination
+                        ) { model.destination.value = it }
+                        Box(Modifier.fillMaxWidth().weight(1f, fill = true)) {
+                            if (destination == Destination.CALENDAR) {
+                                CalendarScreen(
+                                    model,
+                                    selectedDate,
+                                    calendarMode,
+                                    events.filterNot { it.collectionId in settings.hiddenCalendarIds },
+                                    collections,
+                                    settings
+                                )
+                            } else {
+                                SecondaryDestinationScreen(
+                                    destination,
+                                    model,
+                                    accounts,
+                                    featureAccounts,
+                                    pending,
+                                    conflictingEvents,
+                                    conflictingTasks,
+                                    manualSyncState,
+                                    settings
+                                )
+                            }
+                        }
+                    }
+                    AppFeature.TODOS -> TasksScreen(
+                        model,
+                        scheduledTasks,
+                        tasks,
+                        collections,
+                        destination,
+                        { model.destination.value = it }
+                    ) {
+                        SecondaryDestinationScreen(
+                            destination,
+                            model,
                             accounts,
+                            featureAccounts,
                             pending,
                             conflictingEvents,
                             conflictingTasks,
                             manualSyncState,
-                            model::sync,
-                            model::resolveEventConflict,
-                            model::resolveTaskConflict
+                            settings
                         )
-                        Destination.SETTINGS -> SettingsScreen(model, accounts, settings)
+                    }
+                    AppFeature.FILES -> FilesScreen(
+                        model,
+                        files,
+                        mirrorFiles,
+                        collections,
+                        settings,
+                        destination,
+                        { model.destination.value = it }
+                    ) {
+                        SecondaryDestinationScreen(
+                            destination,
+                            model,
+                            accounts,
+                            featureAccounts,
+                            pending,
+                            conflictingEvents,
+                            conflictingTasks,
+                            manualSyncState,
+                            settings
+                        )
                     }
                 }
             }
@@ -177,67 +225,60 @@ fun InkDavApp(model: MainViewModel) {
 }
 
 @Composable
-private fun TopNavigation(selected: Destination, select: (Destination) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(76.dp).border(width = 1.dp, color = Ink)
-            .horizontalScroll(androidx.compose.foundation.rememberScrollState())
-    ) {
-        Destination.entries.forEach { item ->
-            Box(
-                Modifier.fillMaxHeight().widthIn(min = 132.dp)
-                    .background(if (selected == item) Color(0xffe4e1d7) else Paper)
-                    .clickable(remember { MutableInteractionSource() }, null) { select(item) }
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "${item.mark}  ${item.label}",
-                    maxLines = 1,
-                    fontSize = 17.sp,
-                    fontWeight = if (selected ==
-                        item
-                    ) {
-                        FontWeight.Bold
-                    } else {
-                        FontWeight.Medium
-                    }
-                )
-                if (selected == item) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Ink))
-            }
-        }
+private fun SecondaryDestinationScreen(
+    destination: Destination,
+    model: MainViewModel,
+    accounts: List<DavAccountEntity>,
+    featureAccounts: List<DavAccountEntity>,
+    pending: Int,
+    conflictingEvents: List<CalendarEventEntity>,
+    conflictingTasks: List<DavTaskEntity>,
+    manualSyncState: ManualSyncState,
+    settings: InkDavSettings
+) {
+    when (destination) {
+        Destination.SYNC -> SyncScreen(
+            featureAccounts,
+            pending,
+            conflictingEvents,
+            conflictingTasks,
+            manualSyncState,
+            model::sync,
+            model::resolveEventConflict,
+            model::resolveTaskConflict
+        )
+        Destination.SERVER_SETUP -> SettingsScreen(model, accounts, settings)
+        else -> Unit
     }
 }
 
 @Composable
-private fun AppHeader(
-    title: String,
-    pending: Int,
-    accounts: List<DavAccountEntity>,
-    syncState: ManualSyncState,
-    sync: () -> Unit
+private fun UtilityDestinationButton(
+    item: Destination,
+    selected: Destination,
+    home: Destination,
+    modifier: Modifier,
+    select: (Destination) -> Unit
 ) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 58.dp).border(1.dp, Rule).padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.weight(1f))
-        Text(
-            if (syncState.label != null) {
-                syncState.label
-            } else if (accounts.isEmpty()) {
-                "No account"
-            } else if (pending >
-                0
-            ) {
-                "$pending change${if (pending == 1) "" else "s"} waiting"
-            } else {
-                "Up to date"
+    val isSelected = selected == item
+    Box(
+        modifier.border(if (isSelected) 2.dp else 1.dp, if (isSelected) Ink else Rule)
+            .background(if (isSelected) Color(0xffe4e1d7) else Paper)
+            .clickable(remember { MutableInteractionSource() }, null) { select(if (isSelected) home else item) }
+            .semantics(mergeDescendants = true) {
+                contentDescription = if (isSelected) "Close ${item.label}" else item.label
             },
-            color = if (pending > 0 || syncState.label?.contains("failed", true) == true) Warning else MutedInk
-        )
-        Spacer(Modifier.width(12.dp))
-        InkButton(if (syncState.active) "↻ Syncing" else "↻ Sync", enabled = !syncState.active) { sync() }
+        contentAlignment = Alignment.Center
+    ) {
+        Text(item.mark, fontSize = 24.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun SidebarUtilityNavigation(selected: Destination, home: Destination, select: (Destination) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(64.dp)) {
+        UtilityDestinationButton(Destination.SYNC, selected, home, Modifier.weight(1f).fillMaxHeight(), select)
+        UtilityDestinationButton(Destination.SERVER_SETUP, selected, home, Modifier.weight(1f).fillMaxHeight(), select)
     }
 }
 
@@ -250,7 +291,9 @@ private fun CalendarHeader(
     hiddenCalendarIds: Set<String>,
     pending: Int,
     accounts: List<DavAccountEntity>,
-    syncState: ManualSyncState
+    syncState: ManualSyncState,
+    destination: Destination,
+    navigate: (Destination) -> Unit
 ) {
     var showViewMenu by remember { mutableStateOf(false) }
     var showCalendars by remember { mutableStateOf(false) }
@@ -303,6 +346,8 @@ private fun CalendarHeader(
         InkButton("‹", modifier = Modifier.width(88.dp)) { model.selectedDate.value = stepDate(date, mode, -1, isPortrait) }
         InkButton("›", modifier = Modifier.width(88.dp)) { model.selectedDate.value = stepDate(date, mode, 1, isPortrait) }
         HeaderIconButton("▦", "Choose shown calendars") { showCalendars = true }
+        UtilityDestinationButton(Destination.SYNC, destination, Destination.CALENDAR, Modifier.size(48.dp), navigate)
+        UtilityDestinationButton(Destination.SERVER_SETUP, destination, Destination.CALENDAR, Modifier.size(48.dp), navigate)
     }
     if (showCalendars) {
         CalendarVisibilityDialog(
@@ -686,16 +731,20 @@ private fun WeekView(
                     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
                         allDayEvents.forEach { event ->
                             val eventColor = collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Accent
-                            Text(
-                                event.title.ifBlank { "(Untitled)" },
-                                modifier = Modifier.fillMaxWidth().padding(top = 2.dp).background(eventColor)
-                                    .noRippleClick { model.openOccurrence(event) }.padding(horizontal = 4.dp, vertical = 2.dp),
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontSize = 10.sp,
-                                lineHeight = 12.sp
-                            )
+                            Box(
+                                Modifier.fillMaxWidth().padding(top = 2.dp).background(eventColor)
+                                    .noRippleClick { model.openOccurrence(event) }
+                            ) {
+                                Text(
+                                    event.title.ifBlank { "(Untitled)" },
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                                    color = contrastingTextColor(eventColor),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 10.sp,
+                                    lineHeight = 12.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -704,13 +753,13 @@ private fun WeekView(
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize()) {
                 visibleHours.forEach { hour ->
-                    Row(Modifier.fillMaxWidth().weight(1f).border(1.dp, Ink)) {
-                        Box(Modifier.width(62.dp).fillMaxHeight().border(1.dp, Ink), contentAlignment = Alignment.TopCenter) {
+                    Row(Modifier.fillMaxWidth().weight(1f).border(1.dp, TimeDivider)) {
+                        Box(Modifier.width(62.dp).fillMaxHeight().border(1.dp, TimeDivider), contentAlignment = Alignment.TopCenter) {
                             Text("%02d:00".format(hour), fontSize = 9.sp, color = MutedInk, modifier = Modifier.padding(top = 1.dp))
                         }
                         days.forEach { _ ->
-                            Box(Modifier.weight(1f).fillMaxHeight().border(1.dp, Ink)) {
-                                Box(Modifier.align(Alignment.Center).fillMaxWidth().height(1.dp).background(Rule))
+                            Box(Modifier.weight(1f).fillMaxHeight().border(1.dp, TimeDivider)) {
+                                Box(Modifier.align(Alignment.Center).fillMaxWidth().height(1.dp).background(TimeDivider))
                             }
                         }
                     }
@@ -778,19 +827,22 @@ private fun WeekDayTimeline(
             val laneWidth = maxWidth / lane.laneCount
             val start = Instant.ofEpochMilli(event.startEpochMillis).atZone(zone)
             val end = Instant.ofEpochMilli(event.endEpochMillis).atZone(zone)
-            Text(
-                "${start.format(DateTimeFormatter.ofPattern("HH:mm"))}–${end.format(DateTimeFormatter.ofPattern("HH:mm"))} " +
-                    event.title.ifBlank { "(Untitled)" },
+            val eventColor = collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Accent
+            Box(
                 modifier = Modifier.offset(x = laneWidth * lane.lane, y = top).width(laneWidth).height(eventHeight)
-                    .background(Paper).border(
-                        1.dp,
-                        collectionMap[event.collectionId]?.colorArgb?.let(::Color) ?: Rule
-                    ).noRippleClick { openEvent(event) }.padding(horizontal = 2.dp),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 9.sp,
-                lineHeight = 10.sp
-            )
+                    .background(eventColor).noRippleClick { openEvent(event) }
+            ) {
+                Text(
+                    "${start.format(DateTimeFormatter.ofPattern("HH:mm"))}–${end.format(DateTimeFormatter.ofPattern("HH:mm"))} " +
+                        event.title.ifBlank { "(Untitled)" },
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp),
+                    color = contrastingTextColor(eventColor),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 9.sp,
+                    lineHeight = 10.sp
+                )
+            }
         }
         if (day == now.toLocalDate() && now.hour in visibleHours) {
             val nowMillis = now.toInstant().toEpochMilli()
@@ -802,6 +854,11 @@ private fun WeekDayTimeline(
             Box(Modifier.offset(y = top - 3.dp).size(8.dp).background(CurrentTime))
         }
     }
+}
+
+internal fun contrastingTextColor(background: Color): Color {
+    val visibleBackground = background.compositeOver(Paper)
+    return if (visibleBackground.luminance() > 0.179f) Color.Black else Color.White
 }
 
 @Composable
@@ -868,7 +925,10 @@ private fun TasksScreen(
     model: MainViewModel,
     scheduledTasks: List<DavTaskEntity>,
     tasks: List<DavTaskEntity>,
-    collections: List<DavCollectionEntity>
+    collections: List<DavCollectionEntity>,
+    destination: Destination,
+    navigate: (Destination) -> Unit,
+    secondaryContent: @Composable () -> Unit
 ) {
     val lists = collections.filter { it.kind == CollectionKind.TASK_LIST }
     val writableLists = lists.filterNot(DavCollectionEntity::readOnly)
@@ -878,11 +938,6 @@ private fun TasksScreen(
             selectedView = TASKS_ALL
         }
     }
-    if (lists.isEmpty()) {
-        EmptyState("No task lists", "Add a CalDAV account with VTODO support in Settings.")
-        return
-    }
-
     val now = System.currentTimeMillis()
     val recentCompletionCutoff = now - 24 * 60 * 60 * 1000L
     val selectedList = lists.firstOrNull { it.id == selectedView }
@@ -896,67 +951,85 @@ private fun TasksScreen(
     }
 
     Row(Modifier.fillMaxSize().padding(10.dp)) {
-        LazyColumn(Modifier.width(220.dp).fillMaxHeight().border(2.dp, Ink)) {
-            item {
-                TaskNavigationRow("All tasks", scheduledTasks.count { it.completedAt == null }, selectedView == TASKS_ALL) {
-                    selectedView = TASKS_ALL
+        Column(Modifier.width(220.dp).fillMaxHeight().border(2.dp, Ink)) {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+                item {
+                    TaskNavigationRow("All tasks", scheduledTasks.count { it.completedAt == null }, selectedView == TASKS_ALL) {
+                        selectedView = TASKS_ALL
+                        navigate(Destination.TODOS)
+                    }
+                }
+                item {
+                    TaskNavigationRow("Finished", tasks.count { it.completedAt != null }, selectedView == TASKS_FINISHED) {
+                        selectedView = TASKS_FINISHED
+                        navigate(Destination.TODOS)
+                    }
+                }
+                items(lists, key = DavCollectionEntity::id) { list ->
+                    TaskNavigationRow(
+                        list.displayName,
+                        scheduledTasks.count { it.collectionId == list.id && it.completedAt == null },
+                        selectedView == list.id,
+                        Color(list.colorArgb)
+                    ) {
+                        selectedView = list.id
+                        navigate(Destination.TODOS)
+                    }
                 }
             }
-            item {
-                TaskNavigationRow("Finished", tasks.count { it.completedAt != null }, selectedView == TASKS_FINISHED) {
-                    selectedView = TASKS_FINISHED
-                }
-            }
-            items(lists, key = DavCollectionEntity::id) { list ->
-                TaskNavigationRow(
-                    list.displayName,
-                    scheduledTasks.count { it.collectionId == list.id && it.completedAt == null },
-                    selectedView == list.id,
-                    Color(list.colorArgb)
-                ) { selectedView = list.id }
-            }
+            SidebarUtilityNavigation(destination, Destination.TODOS, navigate)
         }
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f).fillMaxHeight().border(2.dp, Ink)) {
-            SectionHeader(
-                when (selectedView) {
-                    TASKS_ALL -> "All tasks · Schedule"
-                    TASKS_FINISHED -> "Finished tasks"
-                    else -> selectedList?.displayName.orEmpty()
-                },
-                if (selectedView == TASKS_ALL) scheduledTasks.count { it.completedAt == null } else visibleTasks.size
+        if (destination != Destination.TODOS) {
+            Box(Modifier.weight(1f).fillMaxHeight().border(2.dp, Ink)) { secondaryContent() }
+        } else if (lists.isEmpty()) {
+            EmptyState(
+                "No task lists",
+                "Add a CalDAV account with VTODO support in Settings.",
+                Modifier.weight(1f).fillMaxHeight().border(2.dp, Ink)
             )
-            if (selectedList?.readOnly == true) {
-                Text("This task list is read-only.", modifier = Modifier.fillMaxWidth().border(1.dp, Ink).padding(12.dp))
-            } else if (writableLists.isNotEmpty()) {
-                InlineTaskCreator(writableLists, selectedList) { collectionId, title ->
-                    model.createTask(collectionId, title, null)
+        } else {
+            Column(Modifier.weight(1f).fillMaxHeight().border(2.dp, Ink)) {
+                SectionHeader(
+                    when (selectedView) {
+                        TASKS_ALL -> "All tasks · Schedule"
+                        TASKS_FINISHED -> "Finished tasks"
+                        else -> selectedList?.displayName.orEmpty()
+                    },
+                    if (selectedView == TASKS_ALL) scheduledTasks.count { it.completedAt == null } else visibleTasks.size
+                )
+                if (selectedList?.readOnly == true) {
+                    Text("This task list is read-only.", modifier = Modifier.fillMaxWidth().border(1.dp, Ink).padding(12.dp))
+                } else if (writableLists.isNotEmpty()) {
+                    InlineTaskCreator(writableLists, selectedList) { collectionId, title ->
+                        model.createTask(collectionId, title, null)
+                    }
                 }
-            }
-            if (selectedView == TASKS_ALL) {
-                val buckets = ScheduleBucketer.bucket(scheduledTasks, LocalDate.now(), ZoneId.systemDefault())
-                if (buckets.isEmpty()) {
-                    EmptyState("No unfinished tasks", "Add a task above.", Modifier.weight(1f))
-                } else {
-                    LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                        buckets.forEach { bucket ->
-                            stickyHeader(bucket.key) { SectionHeader(bucket.title, bucket.tasks.size) }
-                            items(bucket.tasks, key = DavTaskEntity::id) {
-                                TaskRow(it, collections, model::toggleTask, model::openTask)
+                if (selectedView == TASKS_ALL) {
+                    val buckets = ScheduleBucketer.bucket(scheduledTasks, LocalDate.now(), ZoneId.systemDefault())
+                    if (buckets.isEmpty()) {
+                        EmptyState("No unfinished tasks", "Add a task above.", Modifier.weight(1f))
+                    } else {
+                        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+                            buckets.forEach { bucket ->
+                                stickyHeader(bucket.key) { SectionHeader(bucket.title, bucket.tasks.size) }
+                                items(bucket.tasks, key = DavTaskEntity::id) {
+                                    TaskRow(it, collections, model::toggleTask, model::openTask)
+                                }
                             }
                         }
                     }
-                }
-            } else if (visibleTasks.isEmpty()) {
-                EmptyState(
-                    if (selectedView == TASKS_FINISHED) "No finished tasks" else "No tasks in this list",
-                    "Add a task above.",
-                    Modifier.weight(1f)
-                )
-            } else {
-                LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                    items(visibleTasks, key = DavTaskEntity::id) {
-                        TaskRow(it, collections, model::toggleTask, model::openTask)
+                } else if (visibleTasks.isEmpty()) {
+                    EmptyState(
+                        if (selectedView == TASKS_FINISHED) "No finished tasks" else "No tasks in this list",
+                        "Add a task above.",
+                        Modifier.weight(1f)
+                    )
+                } else {
+                    LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+                        items(visibleTasks, key = DavTaskEntity::id) {
+                            TaskRow(it, collections, model::toggleTask, model::openTask)
+                        }
                     }
                 }
             }
@@ -1109,7 +1182,10 @@ private fun FilesScreen(
     files: List<FileNodeEntity>,
     mirrorFiles: List<MirrorEntryEntity>,
     collections: List<DavCollectionEntity>,
-    settings: InkDavSettings
+    settings: InkDavSettings,
+    destination: Destination,
+    navigate: (Destination) -> Unit,
+    secondaryContent: @Composable () -> Unit
 ) {
     var showHiddenFolders by rememberSaveable { mutableStateOf(false) }
     val roots = collections.filter { it.kind == CollectionKind.FILE_ROOT || it.kind == CollectionKind.SHARE }
@@ -1132,13 +1208,19 @@ private fun FilesScreen(
             Box(
                 Modifier.fillMaxWidth().border(if (selectedMirror == null && selectedCollection == null) 2.dp else 1.dp, Ink)
                     .background(if (selectedMirror == null && selectedCollection == null) Color(0xffe4e1d7) else Paper)
-                    .noRippleClick(model::selectLocalFiles).padding(12.dp)
+                    .noRippleClick {
+                        model.selectLocalFiles()
+                        navigate(Destination.FILES)
+                    }.padding(12.dp)
             ) {
                 Text("▰  Local files", fontWeight = FontWeight.Bold)
             }
             mirrors.forEach { mirror ->
                 Box(
-                    Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick { model.selectMirror(mirror.id) }.padding(12.dp)
+                    Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
+                        model.selectMirror(mirror.id)
+                        navigate(Destination.FILES)
+                    }.padding(12.dp)
                 ) {
                     Text("▤  ${mirror.displayName}", fontWeight = if (selectedMirror == mirror.id) FontWeight.Bold else FontWeight.Medium)
                 }
@@ -1148,6 +1230,7 @@ private fun FilesScreen(
                 Box(
                     Modifier.fillMaxWidth().border(0.5.dp, Rule).noRippleClick {
                         model.selectFileCollection(root.id, root.href)
+                        navigate(Destination.FILES)
                     }.padding(14.dp)
                 ) {
                     Text("▤  ${root.displayName}", fontWeight = FontWeight.Bold)
@@ -1179,9 +1262,13 @@ private fun FilesScreen(
                     }
                 }
             }
+            Spacer(Modifier.weight(1f))
+            SidebarUtilityNavigation(destination, Destination.FILES, navigate)
         }
         Spacer(Modifier.width(8.dp))
-        if (selectedMirror != null) {
+        if (destination != Destination.FILES) {
+            Box(Modifier.weight(1f).fillMaxHeight().border(1.dp, Rule)) { secondaryContent() }
+        } else if (selectedMirror != null) {
             LazyColumn(Modifier.weight(1f).fillMaxHeight().border(1.dp, Rule)) {
                 item {
                     Row(Modifier.fillMaxWidth().padding(10.dp)) {
@@ -1725,9 +1812,9 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Accounts", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Shared servers", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            InkButton("+ Account") {
+            InkButton("+ Server") {
                 showAccount =
                     true
             }
@@ -1745,34 +1832,36 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
             }
         }
         accountOperationError?.let { Text(it, modifier = Modifier.fillMaxWidth().border(2.dp, Warning).padding(10.dp), color = Warning) }
-        SettingPanel("Calendar cache") {
-            Text(
-                "Download ${settings.calendarPastDays} days in the past and ${settings.calendarFutureMonths} months ahead. Recurrence masters are retained."
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                InkButton("− past") { model.setCalendarWindow(settings.calendarPastDays - 30, settings.calendarFutureMonths) }
-                InkButton("+ past") { model.setCalendarWindow(settings.calendarPastDays + 30, settings.calendarFutureMonths) }
-                InkButton("− future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths - 6) }
-                InkButton("+ future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths + 6) }
+        if (model.appFeature == AppFeature.CALENDAR) {
+            SettingPanel("Calendar cache") {
+                Text(
+                    "Download ${settings.calendarPastDays} days in the past and ${settings.calendarFutureMonths} months ahead. Recurrence masters are retained."
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InkButton("− past") { model.setCalendarWindow(settings.calendarPastDays - 30, settings.calendarFutureMonths) }
+                    InkButton("+ past") { model.setCalendarWindow(settings.calendarPastDays + 30, settings.calendarFutureMonths) }
+                    InkButton("− future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths - 6) }
+                    InkButton("+ future") { model.setCalendarWindow(settings.calendarPastDays, settings.calendarFutureMonths + 6) }
+                }
             }
-        }
-        SettingPanel("Landscape week hours") {
-            Text(
-                "Show %02d:00–%02d:00 in landscape. Portrait always shows the full day."
-                    .format(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour)
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                InkButton("Start −") {
-                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour - 1, settings.landscapeWeekEndHour)
-                }
-                InkButton("Start +") {
-                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour + 1, settings.landscapeWeekEndHour)
-                }
-                InkButton("End −") {
-                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour - 1)
-                }
-                InkButton("End +") {
-                    model.setLandscapeWeekHours(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour + 1)
+            SettingPanel("Landscape week hours") {
+                Text(
+                    "Show %02d:00–%02d:00 in landscape. Portrait always shows the full day."
+                        .format(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InkButton("Start −") {
+                        model.setLandscapeWeekHours(settings.landscapeWeekStartHour - 1, settings.landscapeWeekEndHour)
+                    }
+                    InkButton("Start +") {
+                        model.setLandscapeWeekHours(settings.landscapeWeekStartHour + 1, settings.landscapeWeekEndHour)
+                    }
+                    InkButton("End −") {
+                        model.setLandscapeWeekHours(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour - 1)
+                    }
+                    InkButton("End +") {
+                        model.setLandscapeWeekHours(settings.landscapeWeekStartHour, settings.landscapeWeekEndHour + 1)
+                    }
                 }
             }
         }
@@ -1821,36 +1910,38 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 color = MutedInk
             )
         }
-        SettingPanel("Files and other apps") {
-            Text(
-                "InkDAV appears in Android's system file picker. Offline mirrors use a folder you explicitly choose; Android does not permit a transparent raw filesystem mount for every legacy app."
-            )
-            Text(
-                "NASDrive v1: HTTPS Basic with revocable device credentials at /webdav/. Folder scans are bounded to avoid waking idle NAS disks continuously.",
-                color = MutedInk
-            )
-            Text(
-                if (settings.localFilesRootUri == null) {
-                    "Local file root: not selected"
-                } else {
-                    "Local file root: available"
-                },
-                fontWeight = FontWeight.Bold
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                InkButton(if (settings.localFilesRootUri == null) "Choose local root" else "Change local root") {
-                    localRootPicker.launch(settings.localFilesRootUri?.let(Uri::parse))
+        if (model.appFeature == AppFeature.FILES) {
+            SettingPanel("Files and other apps") {
+                Text(
+                    "InkDAV appears in Android's system file picker. Offline mirrors use a folder you explicitly choose; Android does not permit a transparent raw filesystem mount for every legacy app."
+                )
+                Text(
+                    "NASDrive v1: HTTPS Basic with revocable device credentials at /webdav/. Folder scans are bounded to avoid waking idle NAS disks continuously.",
+                    color = MutedInk
+                )
+                Text(
+                    if (settings.localFilesRootUri == null) {
+                        "Local file root: not selected"
+                    } else {
+                        "Local file root: available"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InkButton(if (settings.localFilesRootUri == null) "Choose local root" else "Change local root") {
+                        localRootPicker.launch(settings.localFilesRootUri?.let(Uri::parse))
+                    }
+                    DeviceStorageRootButton(model)
+                    if (settings.localFilesRootUri != null) InkButton("Remove local root") { model.clearLocalFilesRoot() }
                 }
-                DeviceStorageRootButton(model)
-                if (settings.localFilesRootUri != null) InkButton("Remove local root") { model.clearLocalFilesRoot() }
+                Text(
+                    "Device storage root requires Android's all-files access. InkDAV uses it only for the local file browser and grants external apps access one selected file at a time.",
+                    color = MutedInk
+                )
             }
-            Text(
-                "Device storage root requires Android's all-files access. InkDAV uses it only for the local file browser and grants external apps access one selected file at a time.",
-                color = MutedInk
-            )
         }
     }
-    if (showAccount) AccountEditor({ showAccount = false }, model::addAccount)
+    if (showAccount) AccountEditor(model.appFeature, { showAccount = false }, model::addAccount)
     copyAccount?.let { account ->
         CopyAccountEditor(account, { copyAccount = null }) { name, url ->
             model.copyAccount(account, name, url)
@@ -1942,15 +2033,15 @@ private fun SettingPanel(title: String, content: @Composable ColumnScope.() -> U
 }
 
 @Composable
-private fun AccountEditor(close: () -> Unit, save: (String, String, String, CharArray, Boolean) -> Unit) {
+private fun AccountEditor(feature: AppFeature, close: () -> Unit, save: (String, String, String, CharArray, Boolean) -> Unit) {
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var nas by remember { mutableStateOf(false) }
+    val nas = feature == AppFeature.FILES
     InkAlertDialog(
         onDismissRequest = close,
-        title = { Text("Add DAV account") },
+        title = { Text(if (nas) "Add NASDrive server" else "Add DAV server") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Name") })
@@ -1962,10 +2053,6 @@ private fun AccountEditor(close: () -> Unit, save: (String, String, String, Char
                     label = { Text(if (nas) "Device secret" else "Password") },
                     visualTransformation = PasswordVisualTransformation()
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(nas, { nas = it })
-                    Text("NASDrive account")
-                }
                 if (nas) Text("Use HTTPS device credentials, not the interactive OIDC password.", color = MutedInk)
             }
         },

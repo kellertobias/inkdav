@@ -8,6 +8,27 @@ Android Keystore alias, encrypted sessions and WorkManager queues.
 
 ## Implemented
 
+- Additional **Infinite Canvas** mode: Create file → Infinite Canvas creates a
+  standard `.excalidraw` file. Existing `.excalidraw`, `.excalidraw.md`, and Markdown
+  files marked `excalidraw-plugin:` open in the native InkCanvas.
+  These canvases have no pages, page borders, or PDF annotation actions. Existing
+  A4 handwriting, Markdown and PDF modes remain available.
+  Finger input exclusively navigates (one-finger pan, pinch zoom); pencil input
+  edits using the shared native header toolbar, presets, eraser, lasso, forms,
+  and undo. The same BOOX direct-ink bridge is available in this mode. There is
+  no WebView, JavaScript editor, overlay toolbar, or Node build dependency.
+  Plain/compressed Obsidian drawing blocks retain their surrounding Markdown;
+  saves use uncompressed JSON blocks and update text metadata. Embedded images
+  and locally available image wiki-links are supported; Insert uses the existing
+  vault image picker. Saves use the immutable blob, conflict and sync mechanisms.
+  Plugin-specific interactive embeds (including PDF embeds), scripts, remote
+  resources and hyperlink navigation are not executed. Missing images and unknown
+  element types have native placeholders and remain preserved in the file.
+  Native rendering supports strokes, basic shapes, lines/arrows, text and images;
+  Excalidraw roughness/hachure, exact custom fonts, complex arrowheads, cropping
+  and frame clipping are not reproduced exactly. Their source fields are retained.
+  Native forms are saved as editable Excalidraw freehand paths. Physical BOOX
+  pen-latency acceptance remains outstanding for this replacement.
 - Black-and-white native workspace with outlined controls, a black status/header area,
   a hamburger toggle, and Vault/Pages/History/Settings sidebar modes. Expandable
   folders and file actions include recursive/hidden filters and transactional note-pair moves.
@@ -54,6 +75,31 @@ Android Keystore alias, encrypted sessions and WorkManager queues.
   whole pair; keeping local source uses an expected-server-head check.
 - Independent release build script and CI artifact; existing InkDAV artifact and
   release naming remain unchanged.
+
+## Infinite Canvas verification (2026-09-08)
+
+- Native replacement: 26 host JVM tests pass, including four native-graphics input
+  tests and five Excalidraw format tests. Debug lint and the app/test APK builds
+  pass. APK inspection confirms no embedded editor JavaScript or font assets.
+  No tablet installation or device-test execution was performed for this revision.
+  See [native canvas behavior and verification](INFINITE_CANVAS.md).
+- The device results below describe the superseded WebView implementation, not
+  physical validation of the native replacement.
+- Debug APK and Kotlin formatting checks pass; debug/release Android lint passes.
+- Five JavaScript format tests pass, alongside the Android JVM test suite.
+- An isolated BOOX Note Air5 C test passed offline editor loading, touch rectangle
+  drawing, local save and reopening without rewriting the scene. The final test
+  was run directly with `adb shell am instrument`, leaving the app installed.
+- Release shrinking remains blocked by missing `javax.sound.sampled`,
+  `org.joda.convert`, and SLF4J binding classes from the existing dependencies.
+- **Device-test incident:** an earlier `connectedDebugAndroidTest` invocation used
+  UTP's `uninstall_after_test: true` cleanup and removed the installed InkVault app
+  and its private local data. The app was reinstalled and re-enabled after BOOX
+  disabled it. The original private data was not recovered; no recovery archive
+  was found in the workspace, `/private/tmp`, or Downloads. Recovery requires a
+  separate backup or synced vault, and unsynced content may be lost. The editor's
+  documentation now warns against this Gradle runner on a personal tablet.
+  This incident is separate from scene-format verification.
 
 ## Unfinished plan requirements
 

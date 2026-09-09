@@ -12,18 +12,22 @@ class WaveformView(context: Context) : View(context) {
             field = value
             invalidate()
         }
-    private val paint = Paint().apply {
+    private val baseline = Paint().apply {
         color = Color.BLACK
-        strokeWidth = 2f
+        strokeWidth = resources.displayMetrics.density
+    }
+    private val waveform = Paint().apply {
+        color = Color.BLACK
+        strokeWidth = resources.displayMetrics.density * 3f
+        strokeCap = Paint.Cap.ROUND
     }
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Color.WHITE)
         val center = height / 2f
-        canvas.drawLine(0f, center, width.toFloat(), center, paint)
+        canvas.drawLine(0f, center, width.toFloat(), center, baseline)
         samples.forEachIndexed { index, sample ->
-            val x = width * index / 40f
+            val x = if (samples.size <= 1) width / 2f else (width - 1) * index / (samples.size - 1f)
             val amplitude = (sample * center).coerceAtLeast(1f)
-            canvas.drawLine(x, center - amplitude, x, center + amplitude, paint)
+            canvas.drawLine(x, center - amplitude, x, center + amplitude, waveform)
         }
     }
 }

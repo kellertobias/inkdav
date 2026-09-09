@@ -85,6 +85,20 @@ class CoreTest {
         assertEquals(true, style.value()["pressure"])
     }
 
+    @Test fun pageLayoutPreferencesAreIndependentAndDefaultToSinglePage() {
+        assertEquals(de.tobisk.inkvault.ui.PageLayoutMode.SINGLE, de.tobisk.inkvault.ui.PageLayoutMode.fromStored(null))
+        assertEquals(de.tobisk.inkvault.ui.PageLayoutMode.SINGLE, de.tobisk.inkvault.ui.PageLayoutMode.fromStored("unknown"))
+        assertEquals(de.tobisk.inkvault.ui.PageLayoutMode.SCROLL, de.tobisk.inkvault.ui.PageLayoutMode.fromStored("scroll"))
+        assertNotEquals(de.tobisk.inkvault.ui.PageLayoutMode.SINGLE.storedValue, de.tobisk.inkvault.ui.PageLayoutMode.SCROLL.storedValue)
+    }
+
+    @Test fun pageFitPreferencesAreIndependentByOrientationAndSidebarState() {
+        val mode = de.tobisk.inkvault.ui.PageFitMode
+        assertEquals(de.tobisk.inkvault.ui.PageFitMode.WIDTH, mode.fromStored(null))
+        assertEquals(de.tobisk.inkvault.ui.PageFitMode.HEIGHT, mode.fromStored("height"))
+        assertEquals(4, listOf(false, true).flatMap { landscape -> listOf(false, true).map { sidebar -> mode.preferenceKey(landscape, sidebar) } }.distinct().size)
+    }
+
     @Test fun markdownOutlineDoesNotModifySourceOrParseFences() {
         val text = "# Title\n```md\n# not a heading\n```\n## Real\n> [!warning] Careful\n[[Real|Alias]]"
         assertEquals(listOf("Title", "Real"), Markdown.outline(text).map { it.title })
@@ -92,6 +106,22 @@ class CoreTest {
         assertTrue(text.contains("[[Real|Alias]]"))
         assertEquals("folder/Other.md", Markdown.resolve("folder/Note.md", "Other", listOf("folder/Other.md", "Other.md")))
         assertNull(Markdown.resolve("Note.md", "dup", listOf("a/dup.md", "b/dup.md")))
+    }
+
+    @Test fun markdownFrontMatterIsSeparatedAndPreservedAsFileMetadata() {
+        val source = "---\ntitle: Field notes\naliases:\n  - Notebook\ntags: [work]\n---\n# Visible heading\nBody"
+        val file = Markdown.file(source)
+        assertEquals("---\ntitle: Field notes\naliases:\n  - Notebook\ntags: [work]\n---\n", file.header)
+        assertEquals("# Visible heading\nBody", file.body)
+        assertEquals(
+            listOf(
+                Markdown.Property("title", "Field notes"),
+                Markdown.Property("aliases", "- Notebook"),
+                Markdown.Property("tags", "[work]")
+            ),
+            file.properties
+        )
+        assertEquals(Markdown.FileParts("", "---\nNot metadata", emptyList()), Markdown.file("---\nNot metadata"))
     }
 
     @Test fun mp3EncoderEmitsMpegFrames() {

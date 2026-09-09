@@ -11,6 +11,53 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DeviceTest {
+    @Test fun syncProgressIsDelayedAndClearsWhenSyncStops() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        lateinit var progress: de.tobisk.inkvault.ui.SyncProgressView
+        try {
+            instrumentation.runOnMainSync {
+                progress = de.tobisk.inkvault.ui.SyncProgressView(activity)
+                activity.setContentView(progress)
+                progress.setSyncing(true)
+                assertEquals(android.view.View.INVISIBLE, progress.visibility)
+                progress.setSyncing(false)
+            }
+            SystemClock.sleep(1700)
+            instrumentation.runOnMainSync {
+                assertEquals("Short sync must never show a delayed indicator", android.view.View.INVISIBLE, progress.visibility)
+                progress.setSyncing(true)
+            }
+            SystemClock.sleep(1700)
+            instrumentation.runOnMainSync {
+                assertEquals(android.view.View.VISIBLE, progress.visibility)
+                progress.setSyncing(false)
+                assertEquals(android.view.View.INVISIBLE, progress.visibility)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    @Test fun fullRefreshPreservesWritingMode() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        try {
+            instrumentation.runOnMainSync {
+                val view = activity.window.decorView
+                val epd = com.onyx.android.sdk.api.device.epd.EpdController.getViewDefaultUpdateMode(view)
+                if (de.tobisk.inkvault.ui.BooxFirmware.available) {
+                    val device = com.onyx.android.sdk.device.Device.currentDevice()
+                    assertNotNull(device.javaClass.getDeclaredField("Z").apply { isAccessible = true }.get(null))
+                    assertTrue(de.tobisk.inkvault.ui.BooxDisplay.fullRefresh(view))
+                    assertEquals(epd, com.onyx.android.sdk.api.device.epd.EpdController.getViewDefaultUpdateMode(view))
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test fun reportNativeInkCapabilities() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {

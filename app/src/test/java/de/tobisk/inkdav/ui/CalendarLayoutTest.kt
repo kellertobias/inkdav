@@ -1,5 +1,6 @@
 package de.tobisk.inkdav.ui
 
+import androidx.compose.ui.graphics.Color
 import de.tobisk.inkdav.CalendarMode
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -64,6 +65,13 @@ class CalendarLayoutTest {
                 )
             )
         )
+    }
+
+    @Test
+    fun weekEventTextUsesTheHigherContrastBlackOrWhite() {
+        assertEquals(Color.White, contrastingTextColor(Color(0xff243b53)))
+        assertEquals(Color.Black, contrastingTextColor(Color(0xffffd54f)))
+        assertEquals(Color.Black, contrastingTextColor(Color(0x20336699)))
     }
 
     @Test

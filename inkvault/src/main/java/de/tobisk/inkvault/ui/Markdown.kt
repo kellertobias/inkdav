@@ -4,6 +4,38 @@ import de.tobisk.inkvault.data.VaultPath
 
 object Markdown {
     data class Heading(val level: Int, val title: String, val offset: Int)
+    data class Property(val name: String, val value: String)
+    data class FileParts(val header: String, val body: String, val properties: List<Property>)
+
+    /** Separates YAML front matter from the note body without normalizing the saved source. */
+    fun file(source: String): FileParts {
+        val match = Regex(
+            "\\A\\uFEFF?---[\\t ]*\\r?\\n([\\s\\S]*?)^(?:---|\\.\\.\\.)[\\t ]*(?:\\r?\\n|\\z)",
+            setOf(RegexOption.MULTILINE)
+        ).find(source)?.takeIf { it.range.first == 0 }
+            ?: return FileParts("", source, emptyList())
+        val properties = mutableListOf<Property>()
+        var name: String? = null
+        val value = mutableListOf<String>()
+        fun finishProperty() {
+            val propertyName = name ?: return
+            properties.add(Property(propertyName, value.joinToString("\n").trim()))
+            name = null
+            value.clear()
+        }
+        match.groupValues[1].lineSequence().forEach { line ->
+            val property = Regex("^([^\\s#][^:]*):(?:[ \\t]*(.*))?$").matchEntire(line)
+            if (property != null) {
+                finishProperty()
+                name = property.groupValues[1].trim()
+                property.groupValues[2].takeIf { it.isNotEmpty() }?.let(value::add)
+            } else if (name != null && line.isNotBlank() && !line.trimStart().startsWith("#")) {
+                value.add(line.trim())
+            }
+        }
+        finishProperty()
+        return FileParts(match.value, source.substring(match.range.last + 1), properties)
+    }
 
     /** Fenced blocks are opaque; preview conversion is never written back to the source. */
     fun outline(source: String): List<Heading> {

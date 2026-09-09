@@ -17,13 +17,14 @@ class AppUpdaterTest {
         val release = selectReleaseAssets(
             "1.2.3",
             listOf(
-                ReleaseAsset("InkDAV-v1.2.3-boox-note-air5c.apk", "https://example.test/app.apk", "sha256:abc"),
-                ReleaseAsset("InkDAV-v1.2.3-boox-note-air5c.apk.sha256", "https://example.test/app.sha256", null),
+                ReleaseAsset("InkDAV-Todos-v1.2.3-boox-note-air5c.apk", "https://example.test/app.apk", "sha256:abc"),
+                ReleaseAsset("InkDAV-Todos-v1.2.3-boox-note-air5c.apk.sha256", "https://example.test/app.sha256", null),
                 ReleaseAsset("source.zip", "https://example.test/source.zip", null)
-            )
+            ),
+            "InkDAV-Todos"
         )
 
-        assertEquals("InkDAV-v1.2.3-boox-note-air5c.apk", release.apk.name)
-        assertEquals("InkDAV-v1.2.3-boox-note-air5c.apk.sha256", release.checksum.name)
+        assertEquals("InkDAV-Todos-v1.2.3-boox-note-air5c.apk", release.apk.name)
+        assertEquals("InkDAV-Todos-v1.2.3-boox-note-air5c.apk.sha256", release.checksum.name)
     }
 }

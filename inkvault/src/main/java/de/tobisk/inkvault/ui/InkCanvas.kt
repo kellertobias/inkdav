@@ -4,7 +4,9 @@ import android.content.Context
 import android.graphics.*
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.VelocityTracker
 import android.view.View
+import android.widget.ScrollView
 import de.tobisk.inkvault.ink.*
 import kotlin.math.min
 
@@ -13,6 +15,30 @@ class InkCanvas(context: Context) : View(context) {
     var page = InkPage()
         private set
     var miniature = false
+    var infinite = false
+    var renderInfinite: ((Canvas, InkPage, Set<String>) -> Unit)? = null
+    var eraseInfinite: ((InkPage, InkPoint, InkPoint, Long) -> InkPage)? = null
+
+    /** In document-flow mode the page owns its natural aspect ratio and fingers scroll the parent. */
+    var scrollingPage = false
+        set(value) {
+            field = value
+            contentDescription = if (value) "Document page. Stylus writes; a finger scrolls between bounded pages." else "Document page. Stylus writes in write mode; two fingers zoom and pan."
+        }
+    var fitToViewport = false
+    var pageFitMode = PageFitMode.WIDTH
+        set(value) {
+            field = value
+            requestLayout()
+            fit()
+        }
+    var viewportHeight = 0
+    var hardwareEnabled = true
+        set(value) {
+            field = value
+            if (value) resumeHardware() else pauseHardware()
+        }
+    var activated: () -> Unit = {}
     var writable = false
         set(value) {
             field = value
@@ -55,6 +81,10 @@ class InkCanvas(context: Context) : View(context) {
     private var flattenedPage: InkPage? = null
     private var flattenedBackground: Bitmap? = null
     private var flattenedSelection: Set<String> = emptySet()
+    private var infiniteBitmap: Bitmap? = null
+    private var infinitePage: InkPage? = null
+    private var infiniteMatrix = FloatArray(9)
+    private var infiniteSelection = emptySet<String>()
     private var history = InkHistory()
     private var points = mutableListOf<InkPoint>()
     private var lasso = mutableListOf<InkPoint>()
@@ -64,14 +94,25 @@ class InkCanvas(context: Context) : View(context) {
     private var panY = 0f
     private var previousX = 0f
     private var previousY = 0f
+    private var navigationReady = false
     private var activePointer = -1
     private var commandStart: InkPage? = null
     private var moving = false
+    private var scrollFingerY = 0f
+    private var scrollVelocity: VelocityTracker? = null
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val scaleDetector = ScaleGestureDetector(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (infinite) {
+                    val old = zoom
+                    zoom = (zoom * detector.scaleFactor).coerceIn(0.05f, 32f)
+                    panX = detector.focusX - (detector.focusX - panX) * zoom / old
+                    panY = detector.focusY - (detector.focusY - panY) * zoom / old
+                    invalidate()
+                    return true
+                }
                 zoom = (zoom * detector.scaleFactor).coerceIn(1f, 5f)
                 invalidate()
                 return true
@@ -85,7 +126,7 @@ class InkCanvas(context: Context) : View(context) {
     }
     fun show(value: InkPage) {
         page = value
-        encodedUpperBound = value.bytes().size.toLong()
+        encodedUpperBound = if (infinite) 0 else value.bytes().size.toLong()
         history = InkHistory()
         selected = emptySet()
         points.clear()
@@ -97,12 +138,36 @@ class InkCanvas(context: Context) : View(context) {
         zoom = 1f
         panX = 0f
         panY = 0f
+        if (infinite && width > 0 && height > 0) {
+            val points = page.strokes.flatMap { it.points } + page.objects.flatMap { obj ->
+                val x = obj["x"] as Long
+                val y = obj["y"] as Long
+                listOf(InkPoint(x, y, 0), InkPoint(x + (obj["width"] as Long), y + (obj["height"] as Long), 0))
+            }
+            if (points.isNotEmpty()) {
+                val left = points.minOf { it.x }.toFloat()
+                val right = points.maxOf { it.x }.toFloat()
+                val top = points.minOf { it.y }.toFloat()
+                val bottom = points.maxOf { it.y }.toFloat()
+                val base = resources.displayMetrics.density / ExcalidrawDocument.UNIT.toFloat()
+                zoom = min((width - 64) / ((right - left).coerceAtLeast(1f) * base), (height - 64) / ((bottom - top).coerceAtLeast(1f) * base)).coerceIn(0.05f, 1f)
+                panX = width / 2f - (left + right) / 2 * base * zoom
+                panY = height / 2f - (top + bottom) / 2 * base * zoom
+            }
+        }
         invalidate()
+    }
+    fun viewportCenter(): InkPoint {
+        val xy = floatArrayOf(width / 2f, height / 2f)
+        val inverse = Matrix()
+        transform().invert(inverse)
+        inverse.mapPoints(xy)
+        return InkPoint(xy[0].toLong(), xy[1].toLong(), 0)
     }
     fun undo() {
         history.undo(page)?.let {
             page = it
-            encodedUpperBound = it.bytes().size.toLong()
+            encodedUpperBound = if (infinite) 0 else it.bytes().size.toLong()
             changed()
             invalidate()
         }
@@ -110,7 +175,7 @@ class InkCanvas(context: Context) : View(context) {
     fun redo() {
         history.redo(page)?.let {
             page = it
-            encodedUpperBound = it.bytes().size.toLong()
+            encodedUpperBound = if (infinite) 0 else it.bytes().size.toLong()
             changed()
             invalidate()
         }
@@ -119,7 +184,7 @@ class InkCanvas(context: Context) : View(context) {
         if (next == page) return
         history.record(page)
         page = next
-        encodedUpperBound = next.bytes().size.toLong()
+        encodedUpperBound = if (infinite) 0 else next.bytes().size.toLong()
         changed()
         invalidate()
     }
@@ -127,7 +192,20 @@ class InkCanvas(context: Context) : View(context) {
         edit(page.transform(selected, 0, 0, factor, lasso.firstOrNull()?.x ?: 0, lasso.firstOrNull()?.y ?: 0))
     }
     private fun transform(): Matrix {
-        val fit = min((width - 24).toFloat() / page.width, (height - 24).toFloat() / page.height).coerceAtLeast(0.00001f)
+        if (infinite) {
+            return Matrix().apply {
+                setScale(resources.displayMetrics.density / ExcalidrawDocument.UNIT.toFloat() * zoom, resources.displayMetrics.density / ExcalidrawDocument.UNIT.toFloat() * zoom)
+                postTranslate(panX, panY)
+            }
+        }
+        val fit = if (fitToViewport) {
+            when (pageFitMode) {
+                PageFitMode.WIDTH -> width.toFloat() / page.width
+                PageFitMode.HEIGHT -> height.toFloat() / page.height
+            }
+        } else {
+            min((width - 24).toFloat() / page.width, (height - 24).toFloat() / page.height)
+        }.coerceAtLeast(0.00001f)
         val scale = fit * zoom
         return Matrix().apply {
             setScale(scale, scale)
@@ -144,6 +222,42 @@ class InkCanvas(context: Context) : View(context) {
     }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (infinite) {
+            val matrix = transform()
+            val values = FloatArray(9).also { matrix.getValues(it) }
+            if (infiniteBitmap?.width != width || infiniteBitmap?.height != height) {
+                infiniteBitmap?.recycle()
+                infiniteBitmap = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                infinitePage = null
+            }
+            if (infinitePage !== page || !infiniteMatrix.contentEquals(values) || infiniteSelection != selected) {
+                val background = Canvas(requireNotNull(infiniteBitmap))
+                background.concat(matrix)
+                renderInfinite?.invoke(background, page, selected)
+                infinitePage = page
+                infiniteMatrix = values
+                infiniteSelection = selected
+            }
+            paint.reset()
+            canvas.drawBitmap(requireNotNull(infiniteBitmap), 0f, 0f, paint)
+            canvas.save()
+            canvas.concat(matrix)
+            if (points.isNotEmpty() && !activeErase && tool != "lasso") drawStroke(canvas, if (tool in InkShapes.tools) InkShapes.points(tool, points.first(), points.last()) else points, style, false)
+            if (lasso.size > 1) {
+                paint.reset()
+                paint.color = Color.BLACK
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 200f
+                val outline = Path().apply {
+                    moveTo(lasso.first().x.toFloat(), lasso.first().y.toFloat())
+                    lasso.drop(1).forEach { lineTo(it.x.toFloat(), it.y.toFloat()) }
+                    close()
+                }
+                canvas.drawPath(outline, paint)
+            }
+            canvas.restore()
+            return
+        }
         canvas.save()
         canvas.concat(transform())
         canvas.clipRect(0f, 0f, page.width.toFloat(), page.height.toFloat())
@@ -216,12 +330,17 @@ class InkCanvas(context: Context) : View(context) {
         val boundary = RectF(0f, 0f, page.width.toFloat(), page.height.toFloat())
         transform().mapRect(boundary)
         canvas.drawRect(boundary, paint)
+        if (fitToViewport) {
+            canvas.drawLine(0f, 1f, width.toFloat(), 1f, paint)
+            canvas.drawLine(0f, height - 1f, width.toFloat(), height - 1f, paint)
+        }
     }
-    private fun drawStroke(canvas: Canvas, samples: List<InkPoint>, style: InkStyle, selected: Boolean) {
+    fun drawStroke(canvas: Canvas, samples: List<InkPoint>, style: InkStyle, selected: Boolean) {
         paint.reset()
         paint.isAntiAlias = !miniature
         paint.color = style.color.toInt()
         paint.alpha = if (style.tool == "marker") 100 else 255
+        (style.extra["opacity"] as? Long)?.let { paint.alpha = (it * 255 / 100).toInt().coerceIn(0, 255) }
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
         paint.style = Paint.Style.STROKE
@@ -243,6 +362,62 @@ class InkCanvas(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val stylus = (0 until event.pointerCount).firstOrNull { event.getToolType(it) == MotionEvent.TOOL_TYPE_STYLUS || event.getToolType(it) == MotionEvent.TOOL_TYPE_ERASER }
         if (stylus == null) {
+            if (infinite) {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    pauseHardware()
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                if (activePointer != -1) cancelStroke()
+                scaleDetector.onTouchEvent(event)
+                // Reset the navigation anchor on pointer-count changes to avoid jumps.
+                val indices = (0 until event.pointerCount).filter { event.actionMasked != MotionEvent.ACTION_POINTER_UP || it != event.actionIndex }
+                val x = indices.map { event.getX(it) }.average().toFloat()
+                val y = indices.map { event.getY(it) }.average().toFloat()
+                if (event.actionMasked == MotionEvent.ACTION_MOVE && navigationReady && !scaleDetector.isInProgress) {
+                    panX += x - previousX
+                    panY += y - previousY
+                    invalidate()
+                }
+                previousX = x
+                previousY = y
+                navigationReady = event.actionMasked != MotionEvent.ACTION_UP && event.actionMasked != MotionEvent.ACTION_CANCEL
+                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) parent?.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
+            if (scrollingPage) {
+                val scroll = scrollingParent() ?: return false
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        pauseHardware()
+                        parent.requestDisallowInterceptTouchEvent(true)
+                        scrollFingerY = event.rawY
+                        scrollVelocity?.recycle()
+                        scrollVelocity = VelocityTracker.obtain().also { it.addMovement(event) }
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        scrollVelocity?.addMovement(event)
+                        scroll.scrollBy(0, (scrollFingerY - event.rawY).toInt())
+                        scrollFingerY = event.rawY
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        scrollVelocity?.apply {
+                            addMovement(event)
+                            computeCurrentVelocity(1000)
+                            scroll.fling(-yVelocity.toInt())
+                            recycle()
+                        }
+                        scrollVelocity = null
+                        parent.requestDisallowInterceptTouchEvent(false)
+                        performClick()
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        scrollVelocity?.recycle()
+                        scrollVelocity = null
+                        parent.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+                return true
+            }
             if (event.actionMasked == MotionEvent.ACTION_DOWN) pauseHardware()
             if (activePointer != -1) cancelStroke()
             scaleDetector.onTouchEvent(event)
@@ -260,19 +435,27 @@ class InkCanvas(context: Context) : View(context) {
             return true
         }
         if (!writable) return true
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+        val action = when (event.actionMasked) {
+            MotionEvent.ACTION_POINTER_DOWN -> if (event.actionIndex == stylus) MotionEvent.ACTION_DOWN else return true
+            MotionEvent.ACTION_POINTER_UP -> if (event.actionIndex == stylus) MotionEvent.ACTION_UP else return true
+            else -> event.actionMasked
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
+            navigationReady = false
+            if (scrollingPage) parent.requestDisallowInterceptTouchEvent(true)
+            activated()
             requestUnbufferedDispatch(event)
             if (!directInkActive) resumeHardware()
         }
-        hardware?.process(event)
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+        if (event.pointerCount == 1) hardware?.process(event) else pauseHardware()
+        if (action == MotionEvent.ACTION_DOWN) {
             transform().invert(inverse)
         }
         val p = position(event, stylus)
         val erasing = tool == "eraser" || event.getToolType(stylus) == MotionEvent.TOOL_TYPE_ERASER
-        when (event.actionMasked) {
+        when (action) {
             MotionEvent.ACTION_DOWN -> {
-                if (p.x !in 0..page.width || p.y !in 0..page.height) return true
+                if (!infinite && (p.x !in 0..page.width || p.y !in 0..page.height)) return true
                 activeBitmap?.eraseColor(Color.TRANSPARENT)
                 activeSamples = 0
                 activeErase = erasing
@@ -283,7 +466,7 @@ class InkCanvas(context: Context) : View(context) {
                     if (!moving) lasso.clear()
                     lasso.add(p)
                 } else if (erasing) {
-                    page = page.erase(p, p, 1500)
+                    page = eraseInfinite?.invoke(page, p, p, 1500) ?: page.erase(p, p, 1500)
                     points.add(p)
                 } else {
                     points.add(p)
@@ -297,7 +480,7 @@ class InkCanvas(context: Context) : View(context) {
                     }
                     lasso.add(p)
                 } else if (erasing) {
-                    page = page.erase(points.lastOrNull() ?: p, p, 1500)
+                    page = eraseInfinite?.invoke(page, points.lastOrNull() ?: p, p, 1500) ?: page.erase(points.lastOrNull() ?: p, p, 1500)
                     points.clear()
                     points.add(p)
                 } else {
@@ -317,12 +500,12 @@ class InkCanvas(context: Context) : View(context) {
                     points.add(p)
                     val newSamples = if (tool in InkShapes.tools) InkShapes.points(tool, points.first(), points.last()) else points.toList()
                     val strokeBound = newSamples.size * 46L + 1024
-                    if (page.strokes.size >= 50000 || encodedUpperBound + strokeBound > CanonicalCbor.MAX_BYTES) {
+                    if (page.strokes.size >= 50000 || (!infinite && encodedUpperBound + strokeBound > CanonicalCbor.MAX_BYTES)) {
                         cancelStroke()
-                        failed("Page limit reached; add a new page")
+                        failed(if (infinite) "Canvas element limit reached" else "Page limit reached; add a new page")
                         return true
                     }
-                    val next = page.copy(strokes = page.strokes + InkStroke(points = newSamples, style = style))
+                    val next = page.copy(strokes = page.strokes + InkStroke(points = newSamples, style = style, extra = if (infinite) mapOf("createdAt" to System.nanoTime()) else emptyMap()))
                     encodedUpperBound += strokeBound
                     // Append only the new stroke to the cached paper; older ink is unchanged.
                     flattened?.takeIf { flattenedPage === page && flattenedBackground === backgroundPage && selected.isEmpty() }?.let { bitmap ->
@@ -344,8 +527,17 @@ class InkCanvas(context: Context) : View(context) {
             }
             MotionEvent.ACTION_CANCEL -> cancelStroke()
         }
+        if (scrollingPage && (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL)) parent.requestDisallowInterceptTouchEvent(false)
         invalidate()
         return true
+    }
+    private fun scrollingParent(): ScrollView? {
+        var ancestor = parent
+        while (ancestor != null) {
+            if (ancestor is ScrollView) return ancestor
+            ancestor = ancestor.parent
+        }
+        return null
     }
     fun clearSelection() {
         selected = emptySet()
@@ -357,6 +549,7 @@ class InkCanvas(context: Context) : View(context) {
         commandStart = null
         activePointer = -1
         points.clear()
+        if (!moving) lasso.clear()
         invalidate()
     }
     private fun select(polygon: List<InkPoint>): Set<String> {
@@ -386,13 +579,12 @@ class InkCanvas(context: Context) : View(context) {
         hardware?.pause()
     }
     fun resumeHardware() {
-        if (miniature || !isAttachedToWindow || !hasWindowFocus() || !writable || tool != "pen") {
+        if (!hardwareEnabled || miniature || !isAttachedToWindow || !hasWindowFocus() || !writable || tool != "pen") {
             pauseHardware()
             return
         }
         if (!BooxPenBridge.supported) return
-        val bounds = RectF(0f, 0f, page.width.toFloat(), page.height.toFloat())
-        transform().mapRect(bounds)
+        val bounds = if (infinite) RectF(0f, 0f, width.toFloat(), height.toFloat()) else RectF(0f, 0f, page.width.toFloat(), page.height.toFloat()).also { transform().mapRect(it) }
         bounds.intersect(0f, 0f, width.toFloat(), height.toFloat())
         val scale = FloatArray(9)
         transform().getValues(scale)
@@ -412,6 +604,18 @@ class InkCanvas(context: Context) : View(context) {
         hardware?.close()
         post { resumeHardware() }
     }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (!fitToViewport) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            return
+        }
+        val width = View.MeasureSpec.getSize(widthMeasureSpec).coerceAtLeast(suggestedMinimumWidth)
+        val height = when (pageFitMode) {
+            PageFitMode.WIDTH -> (width.toDouble() * page.height / page.width).toInt()
+            PageFitMode.HEIGHT -> viewportHeight.takeIf { it > 0 } ?: View.MeasureSpec.getSize(heightMeasureSpec)
+        }.coerceAtLeast(1)
+        setMeasuredDimension(width, height)
+    }
     override fun onHoverEvent(event: MotionEvent): Boolean {
         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS && event.actionMasked == MotionEvent.ACTION_HOVER_ENTER) resumeHardware()
         return super.onHoverEvent(event)
@@ -425,6 +629,9 @@ class InkCanvas(context: Context) : View(context) {
         flattened?.recycle()
         flattened = null
         flattenedPage = null
+        infiniteBitmap?.recycle()
+        infiniteBitmap = null
+        infinitePage = null
         images.evictAll()
         super.onDetachedFromWindow()
     }

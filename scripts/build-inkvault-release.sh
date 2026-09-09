@@ -12,5 +12,5 @@ case "$code" in ''|*[!0-9]*) echo 'Invalid version code' >&2; exit 2 ;; esac
 mkdir -p dist
 artifact="InkVault-v${version}-boox-note-air5c.apk"
 cp inkvault/build/outputs/apk/release/inkvault-release.apk "dist/$artifact"
-./scripts/verify-boox-apk.sh "dist/$artifact" "$version" signed de.tobisk.inkvault
+./scripts/verify-boox-apk.sh "dist/$artifact" "$version" signed de.tobisk.inkvault inkvault
 (cd dist && shasum -a 256 "$artifact" > "$artifact.sha256")

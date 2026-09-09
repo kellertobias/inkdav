@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission
+        android:name="de.tobisk.inkdav.permission.SERVER_SETUP"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="de.tobisk.inkdav.permission.SERVER_SETUP" />
+
+    <queries>
+        <provider android:authorities="de.tobisk.inkdav.server-setup" />
+        <provider android:authorities="de.tobisk.inkdav.todos.server-setup" />
+        <provider android:authorities="de.tobisk.inkdav.files.server-setup" />
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -12,7 +24,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/ic_launcher_inkdav"
-        android:label="InkDAV"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.InkDAV">
         <activity
@@ -26,7 +38,7 @@
 
         <provider
             android:name=".files.InkDavDocumentsProvider"
-            android:authorities="de.tobisk.inkdav.documents"
+            android:authorities="${applicationId}.documents"
             android:enabled="true"
             android:exported="true"
             android:grantUriPermissions="true"
@@ -35,6 +47,14 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+
+        <provider
+            android:name=".settings.ServerSetupProvider"
+            android:authorities="${applicationId}.server-setup"
+            android:exported="true"
+            android:permission="de.tobisk.inkdav.permission.SERVER_SETUP"
+            android:readPermission="de.tobisk.inkdav.permission.SERVER_SETUP"
+            android:writePermission="de.tobisk.inkdav.permission.SERVER_SETUP" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

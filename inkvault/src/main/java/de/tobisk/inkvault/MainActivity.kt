@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
     private var selected: String? = null
     private var editor: EditText? = null
     private var canvas: InkCanvas? = null
+    private var infiniteCanvas: InfiniteCanvas? = null
     private var document: InkDocument? = null
     private var pageIndex = 0
     private var pdfDimensions = emptyList<Pair<Long, Long>>()
@@ -68,6 +69,7 @@ class MainActivity : ComponentActivity() {
     private var playbackReady = false
     private var playbackButton: Button? = null
     private var recentRecordings: LinearLayout? = null
+    private var recordingsExpanded = false
     private lateinit var headerModes: LinearLayout
     private lateinit var sidebarToggle: Button
     private var lastSyncBadge = ""
@@ -77,9 +79,14 @@ class MainActivity : ComponentActivity() {
     private var openedHash = ""
     private var dirty = false
     private var typingPages = mutableListOf("")
+    private var markdownHeader = ""
     private val pageBreak = "\n<!-- inkvault-page-break -->\n"
-    private var preview = false
-    private var pageJob: Job? = null
+    private var preview = true
+    private val markdownExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val pageJobs = mutableMapOf<Int, Job>()
+    private val pageCanvases = mutableMapOf<Int, InkCanvas>()
+    private val dirtyPages = mutableSetOf<Int>()
+    private var pageScroll: ScrollView? = null
     private var sidebarMode = "vault"
     private var pageUndo: String? = null
     private val expanded = mutableSetOf("")
@@ -129,6 +136,10 @@ class MainActivity : ComponentActivity() {
             sidebarHeader.requestLayout()
             sidebarToggle.contentDescription = if (visible) "Close sidebar" else "Open sidebar"
             sidebarToggle.setCompoundDrawables(LineIcon(if (visible) "previous" else "menu", Color.WHITE).apply { setBounds(0, 0, dp(24), dp(24)) }, null, null, null)
+            if (document != null || pdfDimensions.isNotEmpty()) {
+                save()
+                content.post { showPage() }
+            }
         }
         sidebarHeader.addView(sidebarToggle)
         title = label("InkVault").apply {
@@ -146,14 +157,30 @@ class MainActivity : ComponentActivity() {
         top.addView(toolScroll, LinearLayout.LayoutParams(0, dp(48), 1f))
         navigation = row()
         top.addView(navigation)
-        top.addView(
+        val syncControl = FrameLayout(this)
+        syncControl.addView(
             icon("cloud", "Sync now", true) {
                 save()
                 app.syncNow()
                 status.text = "Locally saved · Sync queued"
             }
         )
+        val syncProgress = SyncProgressView(this)
+        syncControl.addView(syncProgress, FrameLayout.LayoutParams(dp(40), dp(4), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(2) })
+        top.addView(syncControl, LinearLayout.LayoutParams(dp(48), dp(48)))
+        androidx.work.WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("vault-sync").observe(this) { work ->
+            syncProgress.setSyncing(work.any { it.state == androidx.work.WorkInfo.State.RUNNING })
+        }
 
+        top.addView(
+            icon("refreshDisplay", "Full rerender", true) {
+                canvas?.pauseHardware()
+                root.invalidate()
+                root.post {
+                    if (!BooxDisplay.fullRefresh(root)) floatingBadge("Full display refresh unavailable")
+                }
+            }
+        )
         root.addView(top)
         status = label(store.meta("status") ?: "Offline · Locally saved").apply {
             background = outline()
@@ -268,7 +295,7 @@ class MainActivity : ComponentActivity() {
             canvas?.let { view ->
                 val bounds = android.graphics.Rect()
                 view.getGlobalVisibleRect(bounds)
-                if (!bounds.contains(event.rawX.toInt(), event.rawY.toInt())) view.pauseHardware()
+                if (!bounds.contains(event.rawX.toInt(), event.rawY.toInt()) || view.scrollingPage && event.getToolType(0) == android.view.MotionEvent.TOOL_TYPE_FINGER) view.pauseHardware()
             }
         }
         return super.dispatchTouchEvent(event)
@@ -294,6 +321,9 @@ class MainActivity : ComponentActivity() {
         canvas?.let { BooxDisplay.apply(it, store.meta("displayMode") ?: "Writing") }
     }
     override fun onDestroy() {
+        markdownExecutor.shutdownNow()
+        infiniteCanvas?.close()
+        infiniteCanvas = null
         player?.release()
         player = null
         super.onDestroy()
@@ -447,7 +477,7 @@ class MainActivity : ComponentActivity() {
             val view = canvas
             val snapshot = view?.page
             try {
-                val bytes = snapshot?.let { withContext(Dispatchers.Default) { it.bytes() } }
+                val bytes = if (infiniteCanvas == null) snapshot?.let { withContext(Dispatchers.Default) { it.bytes() } } else null
                 if (canvas === view && (view == null || view.page === snapshot && !view.drawing)) save(bytes)
             } catch (e: CancellationException) {
                 throw e
@@ -534,11 +564,12 @@ class MainActivity : ComponentActivity() {
         sidebarBody.addView(fileActionsBar)
         (files.parent as? android.view.ViewGroup)?.removeView(files)
         sidebarBody.addView(files, LinearLayout.LayoutParams(-1, 0, 1f))
-        val recording = row().apply { background = outline() }
+        val recording = sectionRow()
         (recordButton.parent as? android.view.ViewGroup)?.removeView(recordButton)
         (waveform.parent as? android.view.ViewGroup)?.removeView(waveform)
+        recording.addView(label("Recording"), LinearLayout.LayoutParams(0, -2, 1f))
+        recording.addView(waveform, LinearLayout.LayoutParams(dp(72), dp(48)))
         recording.addView(recordButton)
-        recording.addView(waveform, LinearLayout.LayoutParams(0, dp(48), 1f))
         playbackButton = icon("play", "Play latest recording") {
             val path = playbackPath ?: latestRecordings().firstOrNull()?.path
             path?.let { playRecording(it) }
@@ -550,20 +581,18 @@ class MainActivity : ComponentActivity() {
         }
         recording.addView(playbackButton)
         recording.addView(
-            icon("recordings", "List recordings") {
-                val recordings = allRecordings()
-                val rows = column()
-                val scroll = ScrollView(this).apply { addView(rows) }
-                recordings.forEach { entry ->
-                    lateinit var entryRow: LinearLayout
-                    entryRow = recordingRow(entry) { rows.removeView(entryRow) }
-                    rows.addView(entryRow)
-                }
-                AlertDialog.Builder(this).setTitle("Recordings").setView(scroll).setNegativeButton("Close", null).show()
+            icon(if (recordingsExpanded) "collapse" else "recordings", if (recordingsExpanded) "Collapse recordings" else "Expand recordings") {
+                recordingsExpanded = !recordingsExpanded
+                buildSidebar()
             }
         )
+        for (i in 1 until recording.childCount) recording.getChildAt(i).background = null
         sidebarBody.addView(recording)
-        recentRecordings = column().also { sidebarBody.addView(it) }
+        val recordingRows = column()
+        recentRecordings = recordingRows
+        val recordingScroll = ScrollView(this).apply { addView(recordingRows) }
+        val recordingHeight = if (recordingsExpanded) dp(minOf(allRecordings().size.coerceAtLeast(1) * 48, 360)) else -2
+        sidebarBody.addView(recordingScroll, LinearLayout.LayoutParams(-1, recordingHeight))
         updateRecentRecordings()
         updatePlaybackButton()
         refreshSidebar()
@@ -623,12 +652,16 @@ class MainActivity : ComponentActivity() {
     private fun latestRecordings() = allRecordings().take(3)
     private fun updateRecentRecordings() {
         val list = recentRecordings ?: return
-        val recordings = latestRecordings()
-        val signature = recordings.joinToString { it.path + it.hash }
+        val recordings = if (recordingsExpanded) allRecordings() else latestRecordings()
+        val signature = "${if (recordingsExpanded) "all" else "recent"}:" + recordings.joinToString { it.path + it.hash }
         if (list.tag == signature) return
         list.tag = signature
         list.removeAllViews()
-        recordings.forEach { entry -> list.addView(recordingRow(entry)) }
+        if (recordings.isEmpty()) {
+            list.addView(label("No recordings yet."))
+        } else {
+            recordings.forEach { entry -> list.addView(recordingRow(entry)) }
+        }
     }
     private fun recordingRow(entry: VaultEntry, deleted: () -> Unit = {}): LinearLayout = row().apply {
         addView(
@@ -760,10 +793,11 @@ class MainActivity : ComponentActivity() {
             },
             preset.getString("name")
         ) {
-            if (view.tool == "pen" && activePresetIndex == index) {
+            val target = canvas ?: view
+            if (target.tool == "pen" && activePresetIndex == index) {
                 editPreset(presets, index, preset.getString("tool") == "marker", preset, tools.getChildAt(index.coerceAtMost(3)))
             } else {
-                selectPreset(view, preset, index)
+                selectPreset(target, preset, index)
             }
         }.apply {
             tag = "preset:$index"
@@ -869,6 +903,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun buildPages() {
         sidebarBody.removeAllViews()
+        if (infiniteCanvas != null) {
+            sidebarBody.addView(label("Infinite Canvas · no pages"))
+            return
+        }
         sidebarBody.addView(label("Document pages"))
         val note = document
         if (note != null && !note.annotation) sidebarBody.addView(button("Add page") { addPageTemplate(note) })
@@ -1035,7 +1073,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun persistTypingPages(index: Int) {
         val path = requireNotNull(selected)
-        openedHash = store.saveEditedText(path, typingPages.joinToString(pageBreak), openedHash).hash
+        openedHash = store.saveEditedText(path, markdownHeader + typingPages.joinToString(pageBreak), openedHash).hash
         pageIndex = index
         dirty = false
         markdown(path)
@@ -1069,7 +1107,11 @@ class MainActivity : ComponentActivity() {
         textUndo.clear()
         save()
         pageIndex = index
-        if (canvas != null) {
+        val scroll = pageScroll
+        if (scroll != null) {
+            activatePage(index, pageCanvases.size)
+            pageCanvases[index]?.let { page -> scroll.post { scroll.scrollTo(0, (page.top - dp(12)).coerceAtLeast(0)) } }
+        } else if (canvas != null) {
             showPage()
         } else {
             selected?.let {
@@ -1077,6 +1119,23 @@ class MainActivity : ComponentActivity() {
                 refreshSidebar()
             }
         }
+    }
+    private fun activatePage(index: Int, count: Int) {
+        val next = pageCanvases[index] ?: return
+        val previous = canvas
+        if (previous !== next) {
+            previous?.pauseHardware()
+            previous?.let {
+                next.tool = it.tool
+                next.style = it.style
+                next.pressureSensitivity = it.pressureSensitivity
+            }
+            canvas = next
+        }
+        pageCanvases.forEach { (page, view) -> view.hardwareEnabled = page == index }
+        pageIndex = index
+        updateNavigation(count)
+        updateActiveTools()
     }
     private fun updateNavigation(count: Int) {
         navigation.removeAllViews()
@@ -1129,7 +1188,7 @@ class MainActivity : ComponentActivity() {
         field.setSelection(edit.cursor)
     }
     private fun createMenu() {
-        AlertDialog.Builder(this).setTitle("Create in /$folder").setItems(arrayOf("Markdown note", "A4 handwriting · portrait", "A4 handwriting · landscape", "Folder", "Import PDF")) { _, choice ->
+        AlertDialog.Builder(this).setTitle("Create in /$folder").setItems(arrayOf("Markdown note", "A4 handwriting · portrait", "A4 handwriting · landscape", "Folder", "Import PDF", "Infinite Canvas")) { _, choice ->
             if (choice == 4) {
                 importFile.launch(arrayOf("application/pdf"))
                 return@setItems
@@ -1140,6 +1199,8 @@ class MainActivity : ComponentActivity() {
                     "Untitled.md"
                 } else if (choice == 3) {
                     "New folder"
+                } else if (choice == 5) {
+                    "Untitled.excalidraw"
                 } else {
                     "Untitled.pdf"
                 }
@@ -1147,6 +1208,11 @@ class MainActivity : ComponentActivity() {
                 val path = VaultPath.join(folder, name)
                 require(store.get(path)?.deleted != false) { "Name already exists" }
                 when (choice) {
+                    5 -> {
+                        require(path.endsWith(".excalidraw", true)) { "Use the .excalidraw file extension" }
+                        store.saveText(path, """{"type":"excalidraw","version":2,"source":"InkVault","elements":[],"appState":{"viewBackgroundColor":"#ffffff"},"files":{}}""")
+                        open(path)
+                    }
                     0 -> {
                         require(path.endsWith(".md"))
                         store.saveText(path, "")
@@ -1170,11 +1236,17 @@ class MainActivity : ComponentActivity() {
     }
     private fun open(path: String) = safe {
         save()
+        infiniteCanvas?.close()
+        infiniteCanvas = null
         editor?.let { field ->
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(field.windowToken, 0)
             field.clearFocus()
         }
-        pageJob?.cancel()
+        pageJobs.values.forEach { it.cancel() }
+        pageJobs.clear()
+        pageCanvases.clear()
+        dirtyPages.clear()
+        pageScroll = null
         player?.release()
         player = null
         playbackPath = null
@@ -1182,11 +1254,13 @@ class MainActivity : ComponentActivity() {
         textUndo.clear()
         editor = null
         canvas = null
+        markdownHeader = ""
         document = null
         pdfDimensions = emptyList()
         pageIndex = 0
         pageUndo = null
         selected = path
+        preview = true
         content.removeAllViews()
         tools.removeAllViews()
         navigation.removeAllViews()
@@ -1198,7 +1272,29 @@ class MainActivity : ComponentActivity() {
             conflict(path)
             return@safe
         }
-        if (path.startsWith(".inkvault/") && path.endsWith("manifest.json")) {
+        if (path.endsWith(".excalidraw", true) ||
+            path.endsWith(".excalidraw.md", true) ||
+            (
+                path.endsWith(".md", true) &&
+                    store.blobs.file(entry.hash).bufferedReader().use { reader ->
+                        val prefix = CharArray(4096)
+                        val count = reader.read(prefix)
+                        count > 0 && Regex("(?m)^excalidraw-plugin:").containsMatchIn(String(prefix, 0, count))
+                    }
+                )
+        ) {
+            infiniteCanvas = InfiniteCanvas(this, store, path, entry.hash, onEdited = {
+                dirty = true
+                queueSave()
+            }, onError = {
+                status.text = "Infinite Canvas: $it"
+            }).also {
+                canvas = it.view
+                content.addView(it.view, LinearLayout.LayoutParams(-1, 0, 1f))
+            }
+            buildInkTools(null)
+            canvas?.post { canvas?.let { BooxDisplay.apply(it, store.meta("displayMode") ?: "Writing") } }
+        } else if (path.startsWith(".inkvault/") && path.endsWith("manifest.json")) {
             document = InkDocument(store, path)
             title.text = document!!.title
             showPage()
@@ -1252,20 +1348,23 @@ class MainActivity : ComponentActivity() {
         val entry = requireNotNull(store.get(path))
         require(entry.size <= 2 * 1024 * 1024) { "Markdown editor limit is 2 MiB; file remains intact" }
         openedHash = entry.hash
+        val file = Markdown.file(store.blobs.file(entry.hash).readText())
+        markdownHeader = file.header
         tools.removeAllViews()
         content.removeAllViews()
         editor = null
-        typingPages = store.blobs.file(entry.hash).readText().split(pageBreak).toMutableList()
+        typingPages = file.body.split(pageBreak).toMutableList()
         pageIndex = pageIndex.coerceIn(0, typingPages.lastIndex)
         val source = typingPages[pageIndex]
         tools.addView(
-            button(if (preview) "Edit source" else "Preview") {
+            button(if (preview) "Edit" else "View") {
                 save()
                 preview = !preview
                 markdown(path)
                 refreshSidebar()
             }
         )
+        tools.addView(icon("metadata", "File Metadata") { showFileMetadata(file.properties) })
         listOf("heading" to "Heading", "bold" to "Bold", "italic" to "Italic").forEach { (glyph, name) -> tools.addView(icon(glyph, name) { formatText(glyph) }) }
         tools.addView(menuButton("bullet", "Lists", listOf("Bullet list", "Numbered list")) { formatText(listOf("bullet", "numbered")[it]) })
         tools.addView(menuButton("add", "Insert", listOf("Table", "Quote", "Section", "Image")) { formatText(listOf("table", "quote", "section", "image")[it]) })
@@ -1281,10 +1380,13 @@ class MainActivity : ComponentActivity() {
         updateNavigation(typingPages.size)
         if (!preview) {
             editor = EditText(this).apply {
+                val formatter = FormattedMarkdownEditor.create(this@MainActivity)
+                addTextChangedListener(io.noties.markwon.editor.MarkwonEditorTextWatcher.withPreRender(formatter, markdownExecutor, this))
                 setText(source)
                 setTextColor(Color.BLACK)
                 setHintTextColor(Color.BLACK)
                 background = outline()
+                setPadding(dp(12), dp(12), dp(12), dp(12))
                 textSize = 19f
                 gravity = Gravity.TOP
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
@@ -1302,10 +1404,10 @@ class MainActivity : ComponentActivity() {
                     override fun afterTextChanged(s: android.text.Editable?) = Unit
                 })
             }
-            content.addView(editor, LinearLayout.LayoutParams(-1, -1))
+            content.addView(editor, LinearLayout.LayoutParams(-1, -1).apply { setMargins(dp(12), dp(12), dp(12), dp(12)) })
         } else {
             val scroll = ScrollView(this)
-            val body = column()
+            val body = column().apply { setPadding(dp(12), dp(12), dp(12), dp(12)) }
             scroll.addView(body)
             content.addView(scroll, LinearLayout.LayoutParams(-1, -1))
             val markwon = Markwon.builder(this).usePlugin(
@@ -1339,104 +1441,227 @@ class MainActivity : ComponentActivity() {
             body.addView(text)
         }
     }
+    private fun showFileMetadata(properties: List<Markdown.Property>) {
+        val rows = column().apply { setPadding(dp(12), dp(4), dp(12), dp(4)) }
+        if (properties.isEmpty()) {
+            rows.addView(label("No file properties"))
+        } else {
+            properties.forEach { property ->
+                rows.addView(
+                    label(property.name).apply {
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setPadding(0, dp(8), 0, 0)
+                    }
+                )
+                rows.addView(label(property.value.ifBlank { "—" }).apply { setPadding(0, 0, 0, dp(8)) })
+            }
+        }
+        val scroll = ScrollView(this).apply { addView(rows) }
+        AlertDialog.Builder(this).setTitle("File Metadata").setView(scroll).setNegativeButton("Close", null).show()
+    }
     private fun showPage() {
-        pageJob?.cancel()
-        canvas?.let { BooxDisplay.apply(it, "System") }
+        pageJobs.values.forEach { it.cancel() }
+        pageJobs.clear()
+        pageCanvases.values.forEach { BooxDisplay.apply(it, "System") }
+        pageCanvases.clear()
+        dirtyPages.clear()
+        pageScroll = null
         content.removeAllViews()
         tools.removeAllViews()
         val note = document
         val count = note?.count ?: pdfDimensions.size
         if (count == 0) return
         pageIndex = pageIndex.coerceIn(0, count - 1)
-        val page = note?.page(pageIndex) ?: pdfDimensions[pageIndex].let { InkPage(it.first, it.second) }
-        val view = InkCanvas(this)
-        canvas = view
-        view.show(page)
-        view.writable = note != null
-        view.failed = { status.text = it }
-        view.changed = {
-            dirty = true
-            queueSave()
+        val preferenceKey = if (note != null && !note.annotation) "notePageLayout" else "pdfPageLayout"
+        val scrolling = PageLayoutMode.fromStored(store.meta(preferenceKey)) == PageLayoutMode.SCROLL
+        val sidebarVisible = sidebar.visibility == View.VISIBLE
+        fun createPageView(index: Int): InkCanvas {
+            val page = note?.page(index) ?: pdfDimensions[index].let { InkPage(it.first, it.second) }
+            val fit = PageFitMode.fromStored(store.meta(PageFitMode.preferenceKey(page.width > page.height, sidebarVisible)))
+            return InkCanvas(this).apply {
+                show(page)
+                scrollingPage = scrolling
+                fitToViewport = true
+                pageFitMode = fit
+                writable = note != null
+                hardwareEnabled = false
+                failed = { status.text = it }
+                changed = {
+                    dirtyPages.add(index)
+                    dirty = true
+                    queueSave()
+                }
+                activated = { activatePage(index, count) }
+                asset = { path -> store.get(path)?.let { PageRenderer.image(store.blobs.file(it.hash), path.endsWith(".svg")) } }
+            }.also { pageCanvases[index] = it }
         }
-        view.asset = { path -> store.get(path)?.let { PageRenderer.image(store.blobs.file(it.hash), path.endsWith(".svg")) } }
-        content.addView(view, LinearLayout.LayoutParams(-1, 0, 1f))
-        updateNavigation(count)
-        view.post { BooxDisplay.apply(view, store.meta("displayMode") ?: "Writing") }
-        if (note != null) {
-            val defaults = documentPresets()
-            repeat(3) { index -> tools.addView(presetButton(view, defaults, index)) }
-            tools.addView(icon("pens", "More pens") { showMorePens(view) }.apply { tag = "tool:pens" })
-            tools.addView(
-                icon("eraser", "Eraser") {
-                    view.tool = "eraser"
-                    updateActiveTools()
-                }.apply { tag = "tool:eraser" }
-            )
-            tools.addView(
-                icon("lasso", "Lasso") {
-                    view.tool = "lasso"
-                    view.clearSelection()
-                    updateActiveTools()
-                }.apply { tag = "tool:lasso" }
-            )
-            tools.addView(
-                menuButton("add", "Insert", listOf("Image", "Forms")) { index ->
-                    if (index == 0) {
-                        chooseAsset(false)
-                    } else {
-                        AlertDialog.Builder(this).setTitle("Forms").setItems(arrayOf("Line", "Rectangle", "Ellipse", "Arrow")) { _, shape ->
-                            view.tool = arrayOf("line", "rectangle", "ellipse", "arrow")[shape]
-                            updateActiveTools()
-                        }.show()
+        if (scrolling) {
+            val pages = column().apply {
+                setPadding(0, dp(12), 0, dp(12))
+                background = pageOutsideBackground()
+            }
+            repeat(count) { index ->
+                val pageView = createPageView(index)
+                pages.addView(pageView, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
+            }
+            pageScroll = ScrollView(this).apply {
+                isFillViewport = true
+                isVerticalScrollBarEnabled = false
+                addView(pages, FrameLayout.LayoutParams(-1, -2))
+                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    pageCanvases.values.forEach { page ->
+                        if (page.viewportHeight != height) {
+                            page.viewportHeight = height
+                            page.requestLayout()
+                        }
                     }
                 }
-            )
-            tools.addView(
-                icon("undo", "Undo") {
-                    if (pageUndo != null) {
-                        note.restoreManifest(requireNotNull(pageUndo))
-                        pageUndo = null
-                        showPage()
-                    } else {
-                        view.undo()
-                    }
-                }
-            )
-            selectPreset(view, defaults.getJSONObject(0), 0)
-        } else {
-            tools.addView(button("Annotate PDF") { annotate() })
-        }
-        val background = if (note?.annotation == true) {
-            note.manifest.getString("basePdfHash") to pageIndex
-        } else if (note != null) {
-            note.pageInfo(pageIndex).optJSONObject("template")?.let { store.get(it.getString("asset"))?.hash to it.getInt("page") }
-        } else {
-            requireNotNull(store.get(requireNotNull(selected))).hash to pageIndex
-        }
-        if (background?.first != null) {
-            val hash = requireNotNull(background.first)
-            pageJob = lifecycleScope.launch {
-                try {
-                    val bitmap = withContext(Dispatchers.IO) { PageRenderer.pdf(store.blobs.file(hash), background.second) }
-                    if (canvas === view) view.backgroundPage = bitmap else bitmap.recycle()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    status.text = "Page preview failed: ${e.message}"
+                setOnScrollChangeListener { _, _, _, _, _ ->
+                    val center = scrollY + height / 2
+                    pageCanvases.minByOrNull { (_, page) -> kotlin.math.abs((page.top + page.bottom) / 2 - center) }?.key?.let { activatePage(it, count) }
+                    updateVisiblePageBackgrounds(this, note)
                 }
             }
+            content.addView(pageScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        } else {
+            val pageView = createPageView(pageIndex)
+            val single = FrameLayout(this).apply { background = pageOutsideBackground() }
+            val height = if (pageView.pageFitMode == PageFitMode.WIDTH) -2 else -1
+            single.addView(pageView, FrameLayout.LayoutParams(-1, height, Gravity.CENTER_VERTICAL))
+            content.addView(single, LinearLayout.LayoutParams(-1, 0, 1f))
         }
+        activatePage(pageIndex, count)
+        canvas?.post {
+            BooxDisplay.apply(requireNotNull(canvas), store.meta("displayMode") ?: "Writing")
+            if (scrolling) updateVisiblePageBackgrounds(requireNotNull(pageScroll), note) else loadPageBackground(pageIndex, requireNotNull(canvas), pageBackground(note, pageIndex))
+        }
+        if (scrolling && pageIndex > 0) pageScroll?.post { pageScroll?.let { scroll -> pageCanvases[pageIndex]?.let { scroll.scrollTo(0, it.top) } } }
+        if (note != null) buildInkTools(note) else tools.addView(button("Annotate PDF") { annotate() })
         refreshSidebar()
     }
+    private fun buildInkTools(note: InkDocument?) {
+        val defaults = documentPresets()
+        val initial = requireNotNull(canvas)
+        repeat(3) { index -> tools.addView(presetButton(initial, defaults, index)) }
+        tools.addView(icon("pens", "More pens") { showMorePens(requireNotNull(canvas)) }.apply { tag = "tool:pens" })
+        tools.addView(
+            icon("eraser", "Eraser") {
+                requireNotNull(canvas).tool = "eraser"
+                updateActiveTools()
+            }.apply { tag = "tool:eraser" }
+        )
+        tools.addView(
+            icon("lasso", "Lasso") {
+                requireNotNull(canvas).tool = "lasso"
+                requireNotNull(canvas).clearSelection()
+                updateActiveTools()
+            }.apply { tag = "tool:lasso" }
+        )
+        tools.addView(
+            menuButton("add", "Insert", listOf("Image", "Forms")) { index ->
+                if (index == 0) {
+                    chooseAsset(false)
+                } else {
+                    AlertDialog.Builder(this).setTitle("Forms").setItems(arrayOf("Line", "Rectangle", "Ellipse", "Arrow")) { _, shape ->
+                        requireNotNull(canvas).tool = arrayOf("line", "rectangle", "ellipse", "arrow")[shape]
+                        updateActiveTools()
+                    }.show()
+                }
+            }
+        )
+        tools.addView(
+            icon("undo", "Undo") {
+                if (note != null && pageUndo != null) {
+                    note.restoreManifest(requireNotNull(pageUndo))
+                    pageUndo = null
+                    showPage()
+                } else {
+                    requireNotNull(canvas).undo()
+                }
+            }
+        )
+        selectPreset(initial, defaults.getJSONObject(0), 0)
+    }
+    private fun pageBackground(note: InkDocument?, index: Int): Pair<String, Int>? = if (note?.annotation == true) {
+        note.manifest.getString("basePdfHash") to index
+    } else if (note != null) {
+        note.pageInfo(index).optJSONObject("template")?.let { template ->
+            store.get(template.getString("asset"))?.hash?.let { hash -> hash to template.getInt("page") }
+        }
+    } else {
+        store.get(requireNotNull(selected))?.hash?.let { it to index }
+    }
+    private fun loadPageBackground(index: Int, view: InkCanvas, background: Pair<String, Int>?) {
+        if (background == null || view.backgroundPage != null || pageJobs[index]?.isActive == true) return
+        pageJobs[index] = lifecycleScope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.IO) { PageRenderer.pdf(store.blobs.file(background.first), background.second) }
+                if (pageCanvases[index] === view) view.backgroundPage = bitmap else bitmap.recycle()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                status.text = "Page preview failed: ${e.message}"
+            }
+        }
+    }
+    private fun updateVisiblePageBackgrounds(scroll: ScrollView, note: InkDocument?) {
+        val top = scroll.scrollY - scroll.height
+        val bottom = scroll.scrollY + scroll.height * 2
+        pageCanvases.forEach { (index, view) ->
+            if (view.bottom >= top && view.top <= bottom) {
+                loadPageBackground(index, view, pageBackground(note, index))
+            } else {
+                pageJobs.remove(index)?.cancel()
+                view.backgroundPage = null
+            }
+        }
+    }
+    private fun pageOutsideBackground(): android.graphics.drawable.Drawable {
+        if (!BooxFirmware.available) return android.graphics.drawable.ColorDrawable(Color.LTGRAY)
+        return object : android.graphics.drawable.Drawable() {
+            private val stripe = android.graphics.Paint().apply {
+                color = Color.LTGRAY
+                strokeWidth = dp(4).toFloat()
+            }
+            override fun draw(canvas: android.graphics.Canvas) {
+                canvas.drawColor(Color.WHITE)
+                var x = -bounds.height()
+                while (x < bounds.width()) {
+                    canvas.drawLine(x.toFloat(), bounds.height().toFloat(), (x + bounds.height()).toFloat(), 0f, stripe)
+                    x += dp(14)
+                }
+            }
+            override fun setAlpha(alpha: Int) {
+                stripe.alpha = alpha
+            }
+            override fun setColorFilter(filter: android.graphics.ColorFilter?) {
+                stripe.colorFilter = filter
+            }
+
+            @Deprecated("Deprecated in Android")
+            override fun getOpacity() = android.graphics.PixelFormat.OPAQUE
+        }
+    }
     private fun save(encodedPage: ByteArray? = null) {
+        val canvasSaved = infiniteCanvas?.persist() == true
+        if (canvasSaved) dirty = true
         if (!dirty) return
         autosaveJob?.cancel()
         val path = selected ?: return
         if (document != null && canvas != null) {
-            if (encodedPage == null) document!!.savePage(pageIndex, canvas!!.page) else document!!.saveEncodedPage(pageIndex, encodedPage)
+            val pages = dirtyPages.ifEmpty { mutableSetOf(pageIndex) }.toList().sorted()
+            pages.forEach { index ->
+                val page = pageCanvases[index] ?: if (index == pageIndex) canvas else null
+                if (index == pageIndex && encodedPage != null) {
+                    document!!.saveEncodedPage(index, encodedPage)
+                } else if (page != null) {
+                    document!!.savePage(index, page.page)
+                }
+            }
+            dirtyPages.clear()
         } else if (editor != null) {
             typingPages[pageIndex] = editor!!.text.toString()
-            openedHash = store.saveEditedText(path, typingPages.joinToString(pageBreak), openedHash).hash
+            openedHash = store.saveEditedText(path, markdownHeader + typingPages.joinToString(pageBreak), openedHash).hash
         }
         dirty = false
         status.text = if (canvas?.directInkActive == true) "Locally saved · BOOX direct ink · ${canvas?.directInkStrokes} SDK strokes" else "Locally saved · Pending sync"
@@ -1482,8 +1707,12 @@ class MainActivity : ComponentActivity() {
         val entries = store.entries().filter { !it.deleted && !VaultPath.hidden(it.path) && if (template) it.path.startsWith("$folder/") && it.path.endsWith(".pdf", true) else it.path.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "svg") }
         AlertDialog.Builder(this).setTitle(if (template) "PDF template from /$folder" else "Insert vault image").setItems(entries.map { it.path }.toTypedArray()) { _, index ->
             safe {
-                val note = requireNotNull(document)
                 val entry = entries[index]
+                if (infiniteCanvas != null && !template) {
+                    infiniteCanvas!!.insertImage(entry.path)
+                    return@safe
+                }
+                val note = requireNotNull(document)
                 if (template) {
                     io("Reading template pages") {
                         val dimensions = PageRenderer.dimensions(store.blobs.file(entry.hash))
@@ -1654,6 +1883,8 @@ class MainActivity : ComponentActivity() {
             dirty = false
             editor = null
             canvas = null
+            infiniteCanvas?.close()
+            infiniteCanvas = null
             document = null
             content.removeAllViews()
             tools.removeAllViews()
@@ -1732,6 +1963,68 @@ class MainActivity : ComponentActivity() {
     }
     private fun settings() {
         val fields = column()
+        fields.addView(label("Page display").apply { setTypeface(typeface, android.graphics.Typeface.BOLD) })
+        fun pageLayoutSetting(name: String, key: String, appliesToOpenDocument: () -> Boolean) {
+            fields.addView(label(name))
+            val choices = row()
+            lateinit var single: Button
+            lateinit var scrolling: Button
+            fun updateButtons() {
+                val mode = PageLayoutMode.fromStored(store.meta(key))
+                single.background = outline(mode == PageLayoutMode.SINGLE)
+                single.setTextColor(if (mode == PageLayoutMode.SINGLE) Color.WHITE else Color.BLACK)
+                scrolling.background = outline(mode == PageLayoutMode.SCROLL)
+                scrolling.setTextColor(if (mode == PageLayoutMode.SCROLL) Color.WHITE else Color.BLACK)
+            }
+            fun select(mode: PageLayoutMode) {
+                save()
+                store.setMeta(key, mode.storedValue)
+                updateButtons()
+                if (appliesToOpenDocument()) showPage()
+            }
+            single = button("One page") { select(PageLayoutMode.SINGLE) }
+            scrolling = button("Scrolling pages") { select(PageLayoutMode.SCROLL) }
+            choices.addView(single, LinearLayout.LayoutParams(0, dp(48), 1f))
+            choices.addView(scrolling, LinearLayout.LayoutParams(0, dp(48), 1f))
+            fields.addView(choices)
+            updateButtons()
+        }
+        pageLayoutSetting("Notes", "notePageLayout") { document?.annotation == false }
+        pageLayoutSetting("PDFs", "pdfPageLayout") { pdfDimensions.isNotEmpty() || document?.annotation == true }
+        fields.addView(label("Scrolling pages are separated by an outside margin and every page keeps a visible border, so the drawable area remains clear."))
+        fields.addView(label("Page fit").apply { setTypeface(typeface, android.graphics.Typeface.BOLD) })
+        fun pageFitSetting(name: String, landscape: Boolean, sidebarOpen: Boolean) {
+            fields.addView(label(name))
+            val key = PageFitMode.preferenceKey(landscape, sidebarOpen)
+            val choices = row()
+            lateinit var width: Button
+            lateinit var height: Button
+            fun updateButtons() {
+                val mode = PageFitMode.fromStored(store.meta(key))
+                width.background = outline(mode == PageFitMode.WIDTH)
+                width.setTextColor(if (mode == PageFitMode.WIDTH) Color.WHITE else Color.BLACK)
+                height.background = outline(mode == PageFitMode.HEIGHT)
+                height.setTextColor(if (mode == PageFitMode.HEIGHT) Color.WHITE else Color.BLACK)
+            }
+            fun select(mode: PageFitMode) {
+                save()
+                store.setMeta(key, mode.storedValue)
+                updateButtons()
+                if (sidebarOpen && (document != null || pdfDimensions.isNotEmpty())) showPage()
+            }
+            width = button("Fit width") { select(PageFitMode.WIDTH) }
+            height = button("Fit height") { select(PageFitMode.HEIGHT) }
+            choices.addView(width, LinearLayout.LayoutParams(0, dp(48), 1f))
+            choices.addView(height, LinearLayout.LayoutParams(0, dp(48), 1f))
+            fields.addView(choices)
+            updateButtons()
+        }
+        pageFitSetting("Portrait · sidebar open", false, true)
+        pageFitSetting("Portrait · sidebar closed", false, false)
+        pageFitSetting("Landscape · sidebar open", true, true)
+        pageFitSetting("Landscape · sidebar closed", true, false)
+        fields.addView(label("Fit width uses the full document width and marks the page top and bottom. Fit height fills the available height and crops the page sides when necessary."))
+        fields.addView(label("Server and folders").apply { setTypeface(typeface, android.graphics.Typeface.BOLD) })
         val server = input("HTTPS ObsidiSync server", store.meta("server") ?: "")
         val vault = input("Vault slug", store.meta("vault") ?: "")
         val user = input("Username", store.meta("user") ?: "")

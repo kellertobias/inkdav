@@ -196,8 +196,8 @@ interface InkDavDao {
     @Query("DELETE FROM pending_mutations WHERE objectId = :objectId")
     suspend fun clearMutationsForObject(objectId: String)
 
-    @Query("SELECT COUNT(*) FROM pending_mutations")
-    fun observePendingCount(): Flow<Int>
+    @Query("SELECT COUNT(*) FROM pending_mutations WHERE objectKind = :objectKind")
+    fun observePendingCount(objectKind: ObjectKind): Flow<Int>
 
     @Query("SELECT * FROM mirror_bindings ORDER BY displayName")
     fun observeMirrors(): Flow<List<MirrorBindingEntity>>

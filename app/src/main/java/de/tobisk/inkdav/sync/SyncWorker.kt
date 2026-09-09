@@ -12,6 +12,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import de.tobisk.inkdav.AppFeature
 import de.tobisk.inkdav.InkDavApplication
 import de.tobisk.inkdav.widgets.WidgetUpdater
 import java.time.Duration
@@ -22,6 +23,7 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
     override suspend fun doWork(): Result {
         setProgress(progressData(0, 0, null))
         val succeeded = (applicationContext as InkDavApplication).container.syncEngine.synchronizeAll(
+            AppFeature.current,
             inputData.getBoolean(INCLUDE_FILES, false)
         ) { progress ->
             setProgress(progressData(progress.completedAccounts, progress.totalAccounts, progress.accountName))

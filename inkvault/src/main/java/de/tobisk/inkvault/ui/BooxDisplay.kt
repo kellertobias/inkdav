@@ -7,6 +7,22 @@ import com.onyx.android.sdk.api.device.epd.UpdateMode
 
 /** View-scoped refresh settings, always reset when the document closes or activity stops. */
 object BooxDisplay {
+    /** One full-panel cleaning refresh; does not change the selected fast/writing mode. */
+    fun fullRefresh(view: View): Boolean {
+        view.invalidate()
+        if (!BooxFirmware.available) return false
+        return try {
+            // The SDK otherwise silently ignores an unresolved vendor method.
+            View::class.java.getDeclaredMethod("refreshScreen", Int::class.javaPrimitiveType)
+            EpdController.refreshScreen(view, UpdateMode.GC)
+            true
+        } catch (_: LinkageError) {
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun apply(view: View, mode: String): String {
         if (!Build.MANUFACTURER.contains("onyx", true) && !Build.BRAND.contains("onyx", true)) return "Standard Android display"
         return try {

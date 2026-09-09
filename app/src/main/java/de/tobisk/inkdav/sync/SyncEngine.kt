@@ -1,5 +1,6 @@
 package de.tobisk.inkdav.sync
 
+import de.tobisk.inkdav.AppFeature
 import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.dav.DavClient
 import de.tobisk.inkdav.dav.DavHttpException
@@ -36,31 +37,33 @@ class SyncEngine(
     )
 
     suspend fun synchronizeAll(
+        feature: AppFeature,
         includeFiles: Boolean = true,
         onProgress: suspend (Progress) -> Unit = {}
     ): Boolean {
-        val accounts = dao.enabledAccounts().filter { includeFiles || it.kind != AccountKind.NASDRIVE }
+        val accounts = dao.enabledAccounts().filter { feature.accepts(it.kind) }
         onProgress(Progress(0, accounts.size, null))
         var allSucceeded = true
         accounts.forEachIndexed { index, account ->
             onProgress(Progress(index, accounts.size, account.displayName))
-            if (runCatching { synchronize(account, includeFiles) }.isFailure) allSucceeded = false
+            if (runCatching { synchronize(account, feature, includeFiles) }.isFailure) allSucceeded = false
             onProgress(Progress(index + 1, accounts.size, null))
         }
         return allSucceeded
     }
 
-    suspend fun synchronize(storedAccount: DavAccountEntity, includeFiles: Boolean = true) {
+    suspend fun synchronize(storedAccount: DavAccountEntity, feature: AppFeature, includeFiles: Boolean = true) {
         val account = storedAccount.copy(baseUrl = normalizeDavBaseUrl(storedAccount.baseUrl, storedAccount.kind))
         if (account.baseUrl != storedAccount.baseUrl) dao.upsertAccount(account.copy(lastSyncError = null))
         val password = credentials.get(account.id) ?: error("Credentials unavailable")
         try {
-            drainOutbox(account, password)
+            drainOutbox(account, password, feature)
             val discovered = dav.discoverCollections(account, password)
             val existingCollections = dao.collections(account.id).associateBy { "${it.href}|${it.kind}" }
             val discoveredCollections = discovered.flatMap { remote ->
                 buildList {
-                    if (remote.isCalendar &&
+                    if (feature == AppFeature.CALENDAR &&
+                        remote.isCalendar &&
                         remote.supportsEvents
                     ) {
                         add(
@@ -76,7 +79,8 @@ class SyncEngine(
                             )
                         )
                     }
-                    if (remote.isCalendar &&
+                    if (feature == AppFeature.TODOS &&
+                        remote.isCalendar &&
                         remote.supportsTasks
                     ) {
                         add(
@@ -92,7 +96,8 @@ class SyncEngine(
                             )
                         )
                     }
-                    if (account.kind == AccountKind.NASDRIVE &&
+                    if (feature == AppFeature.FILES &&
+                        account.kind == AccountKind.NASDRIVE &&
                         remote.isCollection
                     ) {
                         add(
@@ -157,8 +162,8 @@ class SyncEngine(
         }
     }
 
-    private suspend fun drainOutbox(account: DavAccountEntity, password: CharArray) {
-        dao.pendingMutations().filter { it.accountId == account.id }.forEach { pending ->
+    private suspend fun drainOutbox(account: DavAccountEntity, password: CharArray, feature: AppFeature) {
+        dao.pendingMutations().filter { it.accountId == account.id && feature.includes(it.objectKind) }.forEach { pending ->
             if (pending.lastError?.startsWith(CONFLICT_PREFIX) == true) return@forEach
             try {
                 when (pending.mutationKind) {

@@ -7,13 +7,15 @@
     ["@semantic-release/changelog", {"changelogFile": "CHANGELOG.md"}],
     ["@semantic-release/exec", {"prepareCmd": "./scripts/build-release.sh ${nextRelease.version}"}],
     ["@semantic-release/git", {
-      "assets": ["app/build.gradle.kts", "CHANGELOG.md"],
+      "assets": ["app/build.gradle.kts", "inkvault/build.gradle.kts", "CHANGELOG.md"],
       "message": "chore(release): v${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
     }],
     ["@semantic-release/github", {
       "assets": [
-        {"path": "dist/InkDAV-v*-boox-note-air5c.apk", "label": "InkDAV v<%= nextRelease.version %> for BOOX Note Air5 C (signed APK)"},
-        {"path": "dist/InkDAV-v*-boox-note-air5c.apk.sha256", "label": "SHA-256 checksum"}
+        {"path": "dist/InkDAV-*-v*-boox-note-air5c.apk", "label": "InkDAV application v<%= nextRelease.version %> for BOOX Note Air5 C (signed APK)"},
+        {"path": "dist/InkDAV-*-v*-boox-note-air5c.apk.sha256", "label": "SHA-256 checksum"},
+        {"path": "dist/InkVault-v*-boox-note-air5c.apk", "label": "InkVault v<%= nextRelease.version %> for BOOX Note Air5 C (signed APK)"},
+        {"path": "dist/InkVault-v*-boox-note-air5c.apk.sha256", "label": "InkVault SHA-256 checksum"}
       ]
     }]
   ]

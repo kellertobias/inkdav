@@ -66,6 +66,11 @@ class LineIcon(private val name: String, private val ink: Int = Color.BLACK) : D
                 line(3f, 3f, 3f, 9f, 9f, 9f)
                 if (name == "history") line(12f, 7f, 12f, 12f, 16f, 14f)
             }
+            "refreshDisplay" -> {
+                rect(2f, 3f, 22f, 21f)
+                canvas.drawArc(7f, 7f, 17f, 17f, 215f, 285f, false, paint)
+                line(6f, 6f, 6f, 11f, 11f, 11f)
+            }
             "settings" -> {
                 line(4f, 6f, 20f, 6f)
                 line(4f, 12f, 20f, 12f)
@@ -73,6 +78,15 @@ class LineIcon(private val name: String, private val ink: Int = Color.BLACK) : D
                 rect(7f, 4f, 10f, 8f)
                 rect(14f, 10f, 17f, 14f)
                 rect(7f, 16f, 10f, 20f)
+            }
+            "metadata" -> {
+                rect(4f, 3f, 16f, 21f)
+                line(8f, 8f, 12f, 8f)
+                line(8f, 12f, 12f, 12f)
+                line(8f, 16f, 12f, 16f)
+                canvas.drawCircle(18f, 16f, 4f, paint)
+                line(18f, 14f, 18f, 18f)
+                line(16f, 16f, 20f, 16f)
             }
             "add" -> {
                 line(12f, 4f, 12f, 20f)

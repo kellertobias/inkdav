@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
+import de.tobisk.inkdav.AppFeature
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +45,8 @@ internal data class InkDavRelease(
 
 internal class AppUpdater(
     private val context: Context,
-    private val client: OkHttpClient = OkHttpClient()
+    private val client: OkHttpClient = OkHttpClient(),
+    private val releaseName: String = AppFeature.current.releaseName
 ) {
     fun currentVersion(): String = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.0"
 
@@ -130,7 +132,7 @@ internal class AppUpdater(
                 )
             }
         }
-        return selectReleaseAssets(version, assets)
+        return selectReleaseAssets(version, assets, releaseName)
     }
 
     private fun downloadChecksum(asset: ReleaseAsset, apkName: String): String {
@@ -155,8 +157,8 @@ internal class AppUpdater(
     }
 }
 
-internal fun selectReleaseAssets(version: String, assets: List<ReleaseAsset>): InkDavRelease {
-    val apkName = "InkDAV-v$version-boox-note-air5c.apk"
+internal fun selectReleaseAssets(version: String, assets: List<ReleaseAsset>, releaseName: String): InkDavRelease {
+    val apkName = "$releaseName-v$version-boox-note-air5c.apk"
     val checksumName = "$apkName.sha256"
     return InkDavRelease(
         version = version,

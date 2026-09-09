@@ -37,10 +37,10 @@ import kotlinx.coroutines.launch
 
 enum class Destination(val label: String, val mark: String) {
     CALENDAR("Calendar", "□"),
-    TASKS("Tasks", "✓"),
+    TODOS("Todos", "✓"),
     FILES("Files", "▤"),
     SYNC("Sync", "↻"),
-    SETTINGS("Settings", "⚙")
+    SERVER_SETUP("Server Setup", "⚙")
 }
 enum class CalendarMode { YEAR, MONTH, WEEK, DAY }
 
@@ -51,7 +51,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appUpdater = AppUpdater(application)
     private val localFileBrowser = LocalFileBrowser(application)
 
-    val destination = MutableStateFlow(Destination.CALENDAR)
+    val appFeature = AppFeature.current
+    val destination = MutableStateFlow(appFeature.home)
     val selectedDate = MutableStateFlow(LocalDate.now())
     val calendarMode = MutableStateFlow(CalendarMode.MONTH)
     val selectedFileCollection = MutableStateFlow<String?>(null)
@@ -75,9 +76,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val scheduledTasks = dao.observeTasks().map { source ->
         source.mapNotNull { RecurringTaskProjector.next(it) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val pendingCount = dao.observePendingCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-    val conflictingEvents = dao.observeConflictingEvents().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val conflictingTasks = dao.observeConflictingTasks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val pendingCount = dao.observePendingCount(appFeature.objectKind).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+    val conflictingEvents = (
+        if (appFeature == AppFeature.CALENDAR) dao.observeConflictingEvents() else flowOf(emptyList())
+        ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val conflictingTasks = (
+        if (appFeature == AppFeature.TODOS) dao.observeConflictingTasks() else flowOf(emptyList())
+        ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val mirrors = dao.observeMirrors().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val settings = container.preferences.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InkDavSettings())
 
@@ -195,6 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 DavAccountEntity(id, name.trim(), normalized, username.trim(), kind)
             )
             container.credentials.put(id, password)
+            container.serverSetup.publish()
             WidgetUpdater.updateAll(getApplication())
             sync()
         }
@@ -204,6 +210,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             container.credentials.put(account.id, password)
             dao.upsertAccount(account.copy(lastSyncError = null))
+            container.serverSetup.publish()
             sync()
         }
     }
@@ -221,6 +228,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 container.credentials.put(copy.id, password)
                 dao.upsertAccount(copy)
             }.onSuccess {
+                container.serverSetup.publish()
                 WidgetUpdater.updateAll(getApplication())
                 sync()
             }.onFailure { error ->
@@ -243,6 +251,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+        container.serverSetup.publish()
         WidgetUpdater.updateAll(getApplication())
     }
 
@@ -445,7 +454,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         selectedFileParent.value = href
     }
     fun openFile(file: FileNodeEntity) {
-        val uri = DocumentsContract.buildDocumentUri("de.tobisk.inkdav.documents", "file:${file.id}")
+        val uri = DocumentsContract.buildDocumentUri("${getApplication<Application>().packageName}.documents", "file:${file.id}")
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, file.mimeType ?: "application/octet-stream")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)

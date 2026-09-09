@@ -12,7 +12,6 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "de.tobisk.inkdav"
         minSdk = 26
         targetSdk = 36
         versionCode = 1003007
@@ -21,7 +20,32 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    flavorDimensions += "application"
+    productFlavors {
+        create("calendar") {
+            dimension = "application"
+            applicationId = "de.tobisk.inkdav"
+            buildConfigField("String", "APP_FEATURE", "\"CALENDAR\"")
+            resValue("string", "app_name", "InkDAV Calendar")
+        }
+        create("todos") {
+            dimension = "application"
+            applicationId = "de.tobisk.inkdav.todos"
+            buildConfigField("String", "APP_FEATURE", "\"TODOS\"")
+            resValue("string", "app_name", "InkDAV Todos")
+        }
+        create("files") {
+            dimension = "application"
+            applicationId = "de.tobisk.inkdav.files"
+            buildConfigField("String", "APP_FEATURE", "\"FILES\"")
+            resValue("string", "app_name", "InkDAV Files")
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

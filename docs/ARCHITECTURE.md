@@ -2,7 +2,9 @@
 
 ## System in one minute
 
-InkDAV is one Android process with a Room-backed offline model, a WorkManager synchronizer, DAV transport, a Storage Access Framework mirror, a read-only `DocumentsProvider`, and two launcher widgets. Compose never reads a remote account directly: screens and widgets render persisted state, while edits commit locally and enter a durable outbox.
+InkDAV ships three installable Android application variants from one shared implementation. Calendar, Todos, and Files each have an isolated Room cache, WorkManager schedule, and Android sandbox. Compose never reads a remote account directly: screens and widgets render persisted state, while edits commit locally and enter a durable outbox.
+
+Each application shows only its feature plus Sync and Server Setup. `AppFeature` is the capability boundary used by navigation and synchronization. Calendar owns event sync and its widget, Todos owns VTODO sync and its widget, and Files owns NASDrive traversal, mirrors, storage permissions, and the `DocumentsProvider`.
 
 ```text
 app/src/main/java/de/tobisk/inkdav/
@@ -18,7 +20,9 @@ app/src/main/java/de/tobisk/inkdav/
 
 ## Composition and dependency direction
 
-`InkDavApplication` builds the single `AppContainer`. `MainViewModel` exposes Room/DataStore flows and invokes offline commands. `OfflineRepository` is the write boundary for calendar and task edits. `SyncEngine` is the only coordinator allowed to drain mutations and merge server changes. `OkHttpDavClient` owns HTTP and WebDAV XML; it does not mutate local state. `MirrorSyncEngine` owns the separate three-way file baseline.
+`InkDavApplication` builds an `AppContainer` in each application process. `MainViewModel` exposes Room/DataStore flows and invokes offline commands. `OfflineRepository` is the write boundary for calendar and todo edits. `SyncEngine` is the only coordinator allowed to drain mutations and merge server changes, and it accepts an `AppFeature` so an app cannot pull or upload another app's capability. `OkHttpDavClient` owns HTTP and WebDAV XML; it does not mutate local state. `MirrorSyncEngine` owns the separate three-way file baseline.
+
+`ServerSetupCoordinator` replicates account definitions and credentials between installed suite members. Every variant publishes a provider at `<applicationId>.server-setup`; provider access requires the signature-level `de.tobisk.inkdav.permission.SERVER_SETUP` permission. Replicas use a monotonically increasing revision and preserve app-local sync timestamps. Credentials remain encrypted under each application's own Android Keystore key at rest and cross Binder only while applying a signed-peer snapshot.
 
 The intended dependency direction is UI/widgets → view model/repositories → DAO and protocol/domain helpers. DAV transport must not call UI code, and UI code must not bypass the offline repository with network writes.
 
@@ -27,15 +31,15 @@ The intended dependency direction is UI/widgets → view model/repositories → 
 1. `EditEventDialog` calls `MainViewModel.updateEvent`.
 2. `OfflineRepository.updateEvent` patches the original VCALENDAR so unknown properties survive, marks the Room entity pending, replaces its bounded occurrence projection, and atomically replaces the object's outbox mutation.
 3. The calendar recomposes immediately from `observeOccurrences`; no network response is required.
-4. `SyncWorker` runs immediately when requested and periodically when connected. Periodic work syncs calendars/tasks without crawling file roots; a user/app sync includes files and mirrors. `SyncEngine` sends the queued payload with the last ETag.
+4. `SyncWorker` runs immediately when requested and periodically when connected. Calendar and Todos sync only their respective DAV component. Files performs remote traversal and mirror work only during a user/app sync, avoiding periodic NAS wakeups. `SyncEngine` sends the queued payload with the last ETag.
 5. A successful PUT stores the returned ETag and marks the object clean. HTTP 409/412 stops automatic retries and exposes a conflict in Sync. “Use server” discards the local mutation and rebuilds the bounded cache; “Keep both” creates a new UID for the local copy before rebuilding the server object.
 6. The next RFC 6578 report advances the stored sync token only after changed resources and guarded tombstones are applied.
 
-## Calendar, task, and file contracts
+## Calendar, todo, and file contracts
 
 Calendar queries are intentionally bounded by the configured past/future window. Initial bounded queries establish a token baseline but never infer deletion from absence. Later RFC 6578 tombstones can remove only clean local objects. Recurrence masters and raw VCALENDAR payloads are retained; the display projection handles RRULE, RDATE, EXDATE, detached changes/cancellations, DST, and `THISANDFUTURE`.
 
-Recurring VTODOs project to the next incomplete reminder. Completing one adds a detached completed occurrence to the same VCALENDAR and leaves the series active. List mode keeps the source task visible; schedule mode and widgets use the next-incomplete projection.
+Recurring VTODOs project to the next incomplete reminder. Completing one adds a detached completed occurrence to the same VCALENDAR and leaves the series active. List mode keeps the source todo visible; schedule mode and widgets use the next-incomplete projection.
 
 WebDAV indexes are separate from physical mirrors. A mirror performs bounded remote and local scans, compares both sides to the last complete baseline, uses conditional writes, detects unambiguous renames, and creates conflict copies when both contents changed. Android cannot provide a universal raw filesystem mount; the system document picker is the transparent read interface, while a selected SAF folder is the compatibility path for apps requiring physical files.
 
