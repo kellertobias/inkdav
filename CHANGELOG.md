@@ -1,3 +1,21 @@
+## [1.4.0](https://github.com/kellertobias/[secure]/compare/v1.3.7...v1.4.0) (2026-09-09)
+
+### Features
+
+* **accounts:** copy account to new endpoint ([ebabbe0](https://github.com/kellertobias/[secure]/commit/ebabbe05bf4eb5d5e0d2db4eaa75c914099cc217))
+* add InkVault handwriting workspace with BOOX native ink ([a3f1668](https://github.com/kellertobias/[secure]/commit/a3f1668df15b25fa90e3ac8c1c9c44df53461087))
+* **calendar:** distinguish month event types ([93bc193](https://github.com/kellertobias/[secure]/commit/93bc19326a66dcc38a1b1090ef3ac9bd85df6c0a))
+* **calendar:** use DAV colors and adaptive month rows ([cbec030](https://github.com/kellertobias/[secure]/commit/cbec030b461940f84f34882e3fb66f54790e972e))
+* **files:** allow folders to be hidden ([607a3a9](https://github.com/kellertobias/[secure]/commit/607a3a973d74f8a7a05e5a23d53d7ff8d2c5a316))
+* ship four-app BOOX suite ([1388f0d](https://github.com/kellertobias/[secure]/commit/1388f0d54b9113e790822e3185081ab806e367b5))
+
+### Bug Fixes
+
+* **calendar:** render complete week timeline ([66f9e37](https://github.com/kellertobias/[secure]/commit/66f9e3790cf05db03de214056e0cd6fa9a57b193))
+* **files:** hide dotfiles by default ([985fa5a](https://github.com/kellertobias/[secure]/commit/985fa5a2ef1dc9423bbfa26eabd79a82e45890e7))
+* **sync:** show progress and preserve collections ([f11b22d](https://github.com/kellertobias/[secure]/commit/f11b22de66cf2016f71dd10b8501949f98c74a8f))
+* **tasks:** clarify colorful task controls ([c3c1fdc](https://github.com/kellertobias/[secure]/commit/c3c1fdc26dc644a9a82a449536858855363a9996))
+
 ## [1.3.7](https://github.com/kellertobias/[secure]/compare/v1.3.6...v1.3.7) (2026-09-03)
 
 ### Bug Fixes
