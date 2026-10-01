@@ -5,6 +5,7 @@ plugins {
     id("com.google.devtools.ksp")
     id("androidx.room")
     id("org.jlleitschuh.gradle.ktlint")
+    id("io.github.takahirom.roborazzi")
 }
 
 android {
@@ -53,6 +54,8 @@ android {
     }
 
     kotlinOptions { jvmTarget = "17" }
+
+    testOptions { unitTests.isIncludeAndroidResources = true }
 
     val releaseKeystore = System.getenv("INKDAV_KEYSTORE_FILE")
     val releaseStorePassword = System.getenv("INKDAV_KEYSTORE_PASSWORD")
@@ -114,6 +117,12 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
     testImplementation("com.squareup.okhttp3:okhttp-tls:5.1.0")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.test.ext:junit:1.3.0")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.work:work-testing:2.11.2")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.76.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.76.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.room:room-testing:2.8.5")

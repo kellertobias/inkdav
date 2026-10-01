@@ -11,6 +11,24 @@ Each application has its own local feature cache and sync schedule. Server Setup
 
 The UI uses opaque paper-colored surfaces, strong outlines, redundant text status, and page-style navigation. It intentionally avoids shadows, gradients, animated transitions, continuously moving indicators, and color-only state.
 
+## Screenshots
+
+| Calendar | Todos |
+| --- | --- |
+| ![InkDAV Calendar month view](docs/screenshots/calendar.png) | ![InkDAV Todos schedule](docs/screenshots/todos.png) |
+| **Files** | **Shared servers** |
+| ![InkDAV Files browsing a NASDrive root](docs/screenshots/files.png) | ![Shared server setup with a trusted self-signed certificate](docs/screenshots/calendar-servers.png) |
+
+The screenshots are rendered from the real app with demo data by a Robolectric/Roborazzi test. Regenerate them with:
+
+```sh
+./gradlew recordRoborazziCalendarDebug recordRoborazziTodosDebug recordRoborazziFilesDebug --tests '*ReadmeScreenshotTest*'
+```
+
+## Self-signed servers
+
+When adding a server, tick **Server uses a self-signed certificate**. InkDAV opens a TLS connection without sending credentials, shows the certificate's subject, issuer, expiry, and SHA-256 fingerprint, and stores only that fingerprint once you choose **Trust and save**. Compare it with the fingerprint on your server first, for example `openssl x509 -noout -fingerprint -sha256 -in cert.pem`. Only that exact certificate is accepted in addition to Android's normal trust store; TLS verification is never disabled. After the certificate is renewed, use **Trust renewed certificate** in the server settings. Servers that fail with an untrusted certificate offer **Trust self-signed certificate** there as well.
+
 ## InkVault (in development)
 
 The separate `:inkvault` Android app implements an initial offline Obsidian vault,

@@ -27,7 +27,7 @@ class AppContainer(application: Application) {
         SyncEngine(database.dao(), credentials, davClient, preferences, application.filesDir.resolve("offline"), mirrorSyncEngine)
 }
 
-class InkDavApplication : Application() {
+open class InkDavApplication : Application() {
     val container by lazy { AppContainer(this) }
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
