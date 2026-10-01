@@ -37,6 +37,11 @@
         </activity>
 
         <provider
+            android:name=".launcher.LauncherEventsProvider"
+            android:authorities="${applicationId}.launcher"
+            android:exported="true" />
+
+        <provider
             android:name=".files.InkDavDocumentsProvider"
             android:authorities="${applicationId}.documents"
             android:enabled="true"

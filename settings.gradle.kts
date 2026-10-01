@@ -19,3 +19,4 @@ rootProject.name = "InkDAV"
 include(":app")
 
 include(":inkvault")
+include(":inklauncher")
