@@ -32,12 +32,15 @@ class SyncProgressView(context: Context) : View(context) {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     }
 
-    fun setSyncing(syncing: Boolean) {
+    fun setSyncing(syncing: Boolean, immediate: Boolean = false) {
         if (syncing == (started != null)) return
         removeCallbacks(update)
-        started = if (syncing) SystemClock.elapsedRealtime() else null
+        started = if (syncing) SystemClock.elapsedRealtime() - if (immediate) 1500 else 0 else null
         visibility = INVISIBLE
-        if (syncing) post(update)
+        if (syncing) {
+            if (immediate) visibility = VISIBLE
+            post(update)
+        }
     }
 
     override fun onDraw(canvas: Canvas) {

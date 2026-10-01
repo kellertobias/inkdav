@@ -32,6 +32,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_OPEN_NOTE_PATH = "de.tobisk.inkvault.OPEN_NOTE_PATH"
+    }
     private val app get() = application as InkVaultApplication
     private val store get() = app.store
     private lateinit var sidebar: LinearLayout
@@ -58,6 +61,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var recorder: QuickRecorder
     private var folder = ""
     private var selected: String? = null
+    private var openedAt = 0L
+    private var viewReady = false
+    private var recentJob: Job? = null
     private var editor: EditText? = null
     private var canvas: InkCanvas? = null
     private var infiniteCanvas: InfiniteCanvas? = null
@@ -211,12 +217,13 @@ class MainActivity : ComponentActivity() {
         }
         workspace.addView(sidebar, LinearLayout.LayoutParams(dp(320), -1))
         val modes = headerModes
-        listOf("vault" to "folder", "pages" to "pages", "history" to "history", "settings" to "settings").forEach { (mode, glyph) ->
+        listOf("vault" to "folder", "recent" to "history", "pages" to "pages", "history" to "history", "settings" to "settings").forEach { (mode, glyph) ->
             modes.addView(
                 icon(
                     glyph,
                     when (mode) {
                         "vault" -> "Vault structure"
+                        "recent" -> "Recently viewed files"
                         "pages" -> "Document pages"
                         "history" -> "History"
                         else -> "Settings"
@@ -288,7 +295,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         lastSyncBadge = store.meta("syncCompleted") ?: ""
-        (savedInstanceState?.getString("selected") ?: store.meta("lastOpenFile"))?.takeIf { store.get(it)?.deleted == false }?.let { open(it) }
+        (intent.getStringExtra(EXTRA_OPEN_NOTE_PATH) ?: savedInstanceState?.getString("selected") ?: store.meta("lastOpenFile"))?.takeIf { store.get(it)?.deleted == false }?.let { open(it) }
+    }
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(EXTRA_OPEN_NOTE_PATH)?.takeIf { store.get(it)?.deleted == false }?.let { open(it) }
     }
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
@@ -306,6 +318,9 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
     override fun onStop() {
+        recordRecentView()
+        recentJob?.cancel()
+        openedAt = 0L
         canvas?.let {
             it.pauseHardware()
             BooxDisplay.apply(it, "System")
@@ -318,6 +333,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onResume() {
         super.onResume()
+        if (selected != null && viewReady && openedAt == 0L) markViewReady()
         canvas?.let { BooxDisplay.apply(it, store.meta("displayMode") ?: "Writing") }
     }
     override fun onDestroy() {
@@ -342,6 +358,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun refreshSidebar() {
         if (sidebarMode == "settings" || sidebarMode == "history") return
+        if (sidebarMode == "recent") {
+            buildRecentFiles()
+            return
+        }
         val entries = store.entries().filter { !it.deleted }
         if (sidebarMode == "outline") {
             val headings = Markdown.outline(editor?.text?.toString() ?: selected?.let { store.get(it)?.let { e -> if (it.endsWith(".md")) store.blobs.file(e.hash).readText() else "" } } ?: "")
@@ -433,6 +453,47 @@ class MainActivity : ComponentActivity() {
             true
         }
     }
+    private fun recordRecentView() {
+        val path = selected ?: return
+        if (!viewReady || openedAt == 0L || System.currentTimeMillis() - openedAt < 30_000) return
+        val recent = runCatching { JSONArray(store.meta("recentFiles") ?: "[]") }.getOrDefault(JSONArray())
+        val paths = (listOf(path) + (0 until recent.length()).mapNotNull { recent.optString(it).takeIf { value -> value.isNotBlank() && value != path } }).take(50)
+        store.setMeta("recentFiles", JSONArray(paths).toString())
+        if (sidebarMode == "recent") buildRecentFiles()
+    }
+    private fun markViewReady() {
+        viewReady = true
+        openedAt = System.currentTimeMillis()
+        recentJob?.cancel()
+        recentJob = lifecycleScope.launch {
+            delay(30_000)
+            recordRecentView()
+        }
+    }
+    private fun buildRecentFiles() {
+        sidebarBody.removeAllViews()
+        sidebarBody.addView(label("Recently viewed · open for at least 30 seconds"))
+        val recent = runCatching { JSONArray(store.meta("recentFiles") ?: "[]") }.getOrDefault(JSONArray())
+        val paths = (0 until recent.length()).mapNotNull { recent.optString(it).takeIf { path -> store.get(path)?.deleted == false } }
+        if (paths.isEmpty()) sidebarBody.addView(label("No recently viewed files yet."))
+        paths.forEach { path ->
+            val name = if (path.startsWith(".inkvault/notes/") && path.endsWith("/manifest.json")) {
+                runCatching { JSONObject(store.blobs.file(requireNotNull(store.get(path)).hash).readText()).getString("title") }.getOrNull() ?: "InkNote"
+            } else {
+                VaultPath.name(path)
+            }
+            sidebarBody.addView(button("$name · $path") { open(path) })
+        }
+    }
+    private fun localFile(entry: VaultEntry): java.io.File {
+        val file = store.blobs.file(entry.hash)
+        if (file.isFile) return file
+        require(!entry.dirty && !store.meta("server").isNullOrBlank()) { "Local file is missing. Sync from the server to restore it." }
+        val remote = JSONObject().put("path", entry.path).put("sha256", entry.hash).put("size", entry.size)
+        app.client().download(remote, store.meta("head"), store.blobs)
+        check(file.isFile) { "The file could not be restored from the server." }
+        return file
+    }
     private fun sectionRow() = row().apply {
         background = object : android.graphics.drawable.Drawable() {
             private val paint = android.graphics.Paint()
@@ -513,6 +574,10 @@ class MainActivity : ComponentActivity() {
             }
             "history" -> {
                 selected?.let { history(it) } ?: sidebarBody.addView(label("Open a document to view its history."))
+                return
+            }
+            "recent" -> {
+                buildRecentFiles()
                 return
             }
             "pages" -> {
@@ -761,24 +826,35 @@ class MainActivity : ComponentActivity() {
     private fun presetKey() = "documentPresets:${selected ?: "none"}"
     private fun documentPresets(): JSONArray {
         val presets = JSONArray(store.meta(presetKey()) ?: "[]")
+        var changed = false
         if (presets.length() < 3) {
             listOf("Pen 1 (Thin)", "Pen 2 (Thick)", "Marker").forEachIndexed { index, name ->
                 presets.put(
                     index,
                     JSONObject().put("name", name).put("tool", if (index == 2) "marker" else "pen")
-                        .put("width", listOf(300, 900, 4000)[index]).put("color", if (index == 2) 0xffffff00L else 0xff000000L)
+                        .put("width", listOf(300, 900, 4000)[index]).put("sizeRange", InkPresetSize.RANGE_VERSION).put("color", if (index == 2) 0xffffff00L else 0xff000000L)
                         .put("hex", if (index == 2) "#FFFF00" else "#000000").put("pressure", index != 2)
                 )
             }
-            store.setMeta(presetKey(), presets.toString())
+            changed = true
         }
+        for (index in 0 until presets.length()) {
+            val preset = presets.getJSONObject(index)
+            if (preset.optInt("sizeRange", 1) < InkPresetSize.RANGE_VERSION) {
+                val width = preset.optLong("width", 600)
+                preset.put("width", if (preset.optInt("sizeRange", 1) == 2) InkPresetSize.restoreV2(width) else width.coerceIn(InkPresetSize.MIN, InkPresetSize.MAX))
+                    .put("sizeRange", InkPresetSize.RANGE_VERSION)
+                changed = true
+            }
+        }
+        if (changed || store.meta(presetKey()) == null) store.setMeta(presetKey(), presets.toString())
         return presets
     }
     private fun selectPreset(view: InkCanvas, preset: JSONObject, index: Int = activePresetIndex) {
         activePresetIndex = index
         view.tool = "pen"
-        view.pressureSensitivity = preset.optInt("sensitivity", if (preset.optBoolean("pressure")) 100 else 0) / 100f
-        view.style = InkStyle(preset.getString("tool"), preset.getLong("color"), preset.getLong("width"), preset.getBoolean("pressure"), mapOf("brushType" to preset.optString("type", "Pen")))
+        view.pressureSensitivity = 0f
+        view.style = InkStyle(preset.getString("tool"), preset.getLong("color"), preset.getLong("width"), false, mapOf("brushType" to preset.optString("type", "Pen")))
         updateActiveTools()
     }
     private fun presetButton(view: InkCanvas, presets: JSONArray, index: Int): Button {
@@ -1152,7 +1228,22 @@ class MainActivity : ComponentActivity() {
                 background = outline(true)
             }
         )
-        navigation.addView(icon("next", "Next page", true) { if (pageIndex + 1 < count) navigatePage(pageIndex + 1) })
+        navigation.addView(
+            icon("next", "Next page", true) {
+                if (pageIndex + 1 < count) {
+                    navigatePage(pageIndex + 1)
+                } else if (!preview && editor != null && typingPages[pageIndex].isNotBlank()) {
+                    save()
+                    typingPages.add("")
+                    persistTypingPages(typingPages.lastIndex)
+                } else if (document?.annotation == false && canvas?.page?.let { it.strokes.isNotEmpty() || it.objects.isNotEmpty() } == true) {
+                    save()
+                    pageIndex = requireNotNull(document).addPage(pageIndex, canvas!!.page.width > canvas!!.page.height)
+                    showPage()
+                    app.syncNow()
+                }
+            }
+        )
     }
     private fun formatText(kind: String) {
         if (preview) {
@@ -1235,6 +1326,8 @@ class MainActivity : ComponentActivity() {
         }.show()
     }
     private fun open(path: String) = safe {
+        recordRecentView()
+        recentJob?.cancel()
         save()
         infiniteCanvas?.close()
         infiniteCanvas = null
@@ -1260,6 +1353,8 @@ class MainActivity : ComponentActivity() {
         pageIndex = 0
         pageUndo = null
         selected = path
+        viewReady = false
+        openedAt = 0L
         preview = true
         content.removeAllViews()
         tools.removeAllViews()
@@ -1302,26 +1397,24 @@ class MainActivity : ComponentActivity() {
             when (path.substringAfterLast('.').lowercase()) {
                 "md", "txt" -> markdown(path)
                 "pdf" -> io("Opening PDF") {
-                    val dimensions = PageRenderer.dimensions(store.blobs.file(entry.hash))
+                    val dimensions = PageRenderer.dimensions(localFile(entry))
                     withContext(Dispatchers.Main) {
                         if (selected == path) {
                             pdfDimensions = dimensions
                             showPage()
+                            markViewReady()
                         }
                     }
                 }
                 "png", "jpg", "jpeg", "svg" -> io("Opening image") {
-                    val bitmap = PageRenderer.image(store.blobs.file(entry.hash), path.endsWith(".svg", true))
+                    val bitmap = PageRenderer.image(store.blobs.file(entry.hash), path.endsWith(".svg", true), 3200, 3200, true)
                     withContext(Dispatchers.Main) {
                         if (selected == path) {
                             content.addView(
-                                ImageView(this@MainActivity).apply {
-                                    setImageBitmap(bitmap)
-                                    adjustViewBounds = true
-                                    scaleType = ImageView.ScaleType.FIT_CENTER
-                                },
+                                ZoomableImageView(this@MainActivity, requireNotNull(bitmap)),
                                 LinearLayout.LayoutParams(-1, -1)
                             )
+                            markViewReady()
                         }
                     }
                 }
@@ -1339,6 +1432,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         refreshSidebar()
+        if (!path.endsWith(".pdf", true) && path.substringAfterLast('.').lowercase() !in setOf("png", "jpg", "jpeg", "svg")) markViewReady()
     }
     private fun markdown(path: String) {
         editor?.let { field ->
@@ -1418,7 +1512,10 @@ class MainActivity : ComponentActivity() {
                             require(uri.scheme == "vault-image" || uri.scheme.isNullOrEmpty()) { "Only local vault images are displayed" }
                             val target = if (uri.scheme == "vault-image") java.net.URLDecoder.decode(raw.removePrefix("vault-image:"), "UTF-8") else raw
                             val resolved = requireNotNull(Markdown.resolve(path, target, store.entries().filter { !it.deleted }.map { it.path })) { "Image unavailable locally" }
-                            val bitmap = requireNotNull(PageRenderer.image(store.blobs.file(requireNotNull(store.get(resolved)).hash), resolved.endsWith(".svg", true)))
+                            val imageEntry = requireNotNull(store.get(resolved))
+                            val availableWidth = (content.width - dp(24)).takeIf { it > 0 }
+                                ?: (resources.displayMetrics.widthPixels - if (sidebar.visibility == View.VISIBLE) dp(320) else 0) - dp(24)
+                            val bitmap = requireNotNull(PageRenderer.image(store.blobs.file(imageEntry.hash), resolved.endsWith(".svg", true), availableWidth.coerceAtLeast(1), resources.displayMetrics.heightPixels.coerceAtLeast(1)))
                             return io.noties.markwon.image.ImageItem.withResult(android.graphics.drawable.BitmapDrawable(resources, bitmap))
                         }
                     })
@@ -1438,7 +1535,69 @@ class MainActivity : ComponentActivity() {
             val text = label("")
             text.setTextIsSelectable(true)
             markwon.setMarkdown(text, Markdown.preview(source))
+            var graphic: String? = null
+            var downX = 0f
+            var downY = 0f
+            text.setOnTouchListener { view, event ->
+                fun imageAtTouch(): String? {
+                    val layout = text.layout ?: return null
+                    val x = event.x - text.totalPaddingLeft + text.scrollX
+                    val y = event.y - text.totalPaddingTop + text.scrollY
+                    val line = layout.getLineForVertical(y.toInt().coerceAtLeast(0))
+                    val offset = layout.getOffsetForHorizontal(line, x)
+                    val styled = text.text as? android.text.Spanned ?: return null
+                    val span = styled.getSpans(offset, offset, io.noties.markwon.image.AsyncDrawableSpan::class.java).firstOrNull() ?: return null
+                    if (x < layout.getPrimaryHorizontal(styled.getSpanStart(span)) || x > layout.getPrimaryHorizontal(styled.getSpanEnd(span))) return null
+                    return span.drawable.destination
+                }
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        graphic = imageAtTouch()
+                        downX = event.x
+                        downY = event.y
+                        if (graphic != null) scroll.requestDisallowInterceptTouchEvent(true)
+                        graphic != null
+                    }
+                    android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                        graphic?.let { target -> showGraphic(path, target) }
+                        graphic = null
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        val target = graphic
+                        graphic = null
+                        scroll.requestDisallowInterceptTouchEvent(false)
+                        if (target != null && kotlin.math.abs(event.x - downX) < dp(8) && kotlin.math.abs(event.y - downY) < dp(8)) showGraphic(path, target)
+                        target != null
+                    }
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        graphic = null
+                        scroll.requestDisallowInterceptTouchEvent(false)
+                        false
+                    }
+                    else -> graphic != null
+                }
+            }
             body.addView(text)
+        }
+    }
+    private fun showGraphic(notePath: String, target: String) {
+        val decoded = if (target.startsWith("vault-image:")) java.net.URLDecoder.decode(target.removePrefix("vault-image:"), "UTF-8") else target
+        val path = Markdown.resolve(notePath, decoded, store.entries().filter { !it.deleted }.map { it.path })
+        if (path == null) {
+            message("Image unavailable locally: $decoded")
+            return
+        }
+        io("Opening graphic") {
+            val entry = requireNotNull(store.get(path))
+            val bitmap = requireNotNull(PageRenderer.image(store.blobs.file(entry.hash), path.endsWith(".svg", true), 3200, 3200, true))
+            withContext(Dispatchers.Main) {
+                val dialog = AlertDialog.Builder(this@MainActivity).setTitle(VaultPath.name(path))
+                    .setView(ZoomableImageView(this@MainActivity, bitmap))
+                    .setPositiveButton("Close", null).create()
+                dialog.show()
+                dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+            }
         }
     }
     private fun showFileMetadata(properties: List<Markdown.Property>) {
@@ -1739,10 +1898,9 @@ class MainActivity : ComponentActivity() {
         val targetCanvas = canvas
         val preset = old ?: JSONObject().put("name", if (marker) "Marker" else "Pen ${index + 1}")
             .put("tool", if (marker) "marker" else "pen").put("type", if (marker) "Marker" else "Pen")
-            .put("width", if (marker) 4000 else 600).put("color", 0xff000000L).put("pressure", !marker)
+            .put("width", if (marker) InkPresetSize.MAX else InkPresetSize.MIN).put("sizeRange", InkPresetSize.RANGE_VERSION).put("color", 0xff000000L).put("pressure", false)
         var type = preset.optString("type", if (preset.optString("tool") == "marker") "Marker" else "Pen")
-        var size = preset.getLong("width")
-        var sensitivity = preset.optInt("sensitivity", if (preset.optBoolean("pressure")) 100 else 0)
+        var size = preset.getLong("width").coerceIn(InkPresetSize.MIN, InkPresetSize.MAX)
         var color = preset.getLong("color")
         val body = column().apply {
             background = outline()
@@ -1754,7 +1912,7 @@ class MainActivity : ComponentActivity() {
         }
         fun persist() {
             preset.put("type", type).put("tool", if (type == "Marker") "marker" else "pen")
-                .put("width", size).put("color", color).put("sensitivity", sensitivity).put("pressure", sensitivity > 0)
+                .put("width", size).put("sizeRange", InkPresetSize.RANGE_VERSION).put("color", color)
             array.put(index, preset)
             store.setMeta(documentKey, array.toString())
             presetIcons.removeAll { it.get() == null }
@@ -1808,8 +1966,8 @@ class MainActivity : ComponentActivity() {
             })
         }
         sizeRow.addView(
-            slider(1995, ((size - 50) / 10).toInt(), "Pen size") {
-                size = 50L + it * 10
+            slider(InkPresetSize.SLIDER_MAX, InkPresetSize.toSlider(size), "Pen size") {
+                size = InkPresetSize.fromSlider(it)
                 dot.invalidate()
                 dot.contentDescription = "Pen size ${size / 1000.0} mm"
             },
@@ -1817,10 +1975,6 @@ class MainActivity : ComponentActivity() {
         )
         sizeRow.addView(dot, LinearLayout.LayoutParams(dp(48), dp(48)))
         body.addView(sizeRow)
-        val pressureRow = row()
-        pressureRow.addView(label("Pressure\nsensitivity"), LinearLayout.LayoutParams(dp(100), -2))
-        pressureRow.addView(slider(100, sensitivity, "Pressure sensitivity") { sensitivity = it }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        body.addView(pressureRow)
         val colors = row()
         colors.addView(label("Color"), LinearLayout.LayoutParams(dp(60), -2))
         val palette = listOf("Black" to "#000000", "Grey" to "#808080", "Red" to "#FF0000", "Orange" to "#FF8000", "Yellow" to "#FFFF00", "Lime" to "#BFFF00", "Green" to "#008000", "Teal" to "#008080", "Cyan" to "#00FFFF", "Blue" to "#0000FF", "Purple" to "#800080", "Pink" to "#FF69B4")
@@ -1928,11 +2082,27 @@ class MainActivity : ComponentActivity() {
             }
             content.addView(editor, LinearLayout.LayoutParams(-1, 0, 1f))
         }
-        tools.addView(button(if (text) "Resolve edited text" else "Keep local version") { resolve(path, if (text) editor!!.text.toString() else null, false) })
-        tools.addView(button("Use received version") { resolve(path, null, true) })
+        val progressLabel = label("Resolving sync conflict…").apply { visibility = View.GONE }
+        val progress = SyncProgressView(this).apply { contentDescription = "Resolving sync conflict" }
+        content.addView(progressLabel)
+        content.addView(progress, LinearLayout.LayoutParams(-1, dp(4)))
+        val actions = mutableListOf<Button>()
+        fun beginResolution(text: String?, remote: Boolean) {
+            actions.forEach { it.isEnabled = false }
+            progressLabel.visibility = View.VISIBLE
+            progress.setSyncing(true, immediate = true)
+            resolve(path, text, remote) {
+                actions.forEach { it.isEnabled = true }
+                progressLabel.visibility = View.GONE
+                progress.setSyncing(false)
+            }
+        }
+        actions += button(if (text) "Resolve edited text" else "Keep local version") { beginResolution(if (text) editor!!.text.toString() else null, false) }
+        actions += button("Use received version") { beginResolution(null, true) }
+        actions.forEach(tools::addView)
     }
-    private fun resolve(path: String, text: String?, remote: Boolean) {
-        io("Resolving conflict") {
+    private fun resolve(path: String, text: String?, remote: Boolean, finished: () -> Unit) {
+        io("Resolving conflict", finished) {
             synchronized(app.syncLock) {
                 val pair = store.pairRoot(path)
                 if (pair != null) {
@@ -2140,7 +2310,7 @@ class MainActivity : ComponentActivity() {
             error("OIDC login expired")
         }
     }
-    private fun io(label: String, block: suspend () -> Unit) {
+    private fun io(label: String, finished: (() -> Unit)? = null, block: suspend () -> Unit) {
         status.text = label
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -2149,6 +2319,8 @@ class MainActivity : ComponentActivity() {
                 throw e
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { status.text = "$label failed: ${e.message}" }
+            } finally {
+                if (finished != null) withContext(Dispatchers.Main) { finished() }
             }
         }
     }

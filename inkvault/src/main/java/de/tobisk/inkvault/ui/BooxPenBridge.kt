@@ -85,14 +85,14 @@ class BooxPenBridge(private val view: InkCanvas) {
             if (!pen.isRawDrawingCreated) pen.openRawDrawing()
             pen.setStrokeWidth(width.coerceAtLeast(1f)).setStrokeColor(style.color.toInt())
                 .setStrokeStyle(
-                    if (style.tool == "marker") {
-                        TouchHelper.STROKE_STYLE_MARKER
-                    } else if (style.extra["brushType"] == "Pencil") {
-                        TouchHelper.STROKE_STYLE_PENCIL
-                    } else if (style.pressure) {
-                        TouchHelper.STROKE_STYLE_FOUNTAIN
-                    } else {
-                        TouchHelper.STROKE_STYLE_PENCIL
+                    when {
+                        style.tool == "marker" -> TouchHelper.STROKE_STYLE_MARKER
+                        style.extra["brushType"] == "Pencil" -> TouchHelper.STROKE_STYLE_CHARCOAL_V2
+                        else -> {
+                            // Fountain adds a firmware-specific speed curve. The stable pen
+                            // path plus the explicit pressure values below matches InkCanvas.
+                            TouchHelper.STROKE_STYLE_PENCIL
+                        }
                     }
                 )
             pen.setRawDrawingRenderEnabled(true).setRawDrawingEnabled(true)
@@ -112,23 +112,17 @@ class BooxPenBridge(private val view: InkCanvas) {
         val started = System.nanoTime()
         try {
             val style = configuredStyle ?: return
-            fun pressure(history: Int?) = if (style.pressure) {
-                val raw = if (history == null) event.getPressure(pointer) else event.getHistoricalPressure(pointer, history)
-                (1f + (raw - 1f) * view.pressureSensitivity).coerceIn(0.2f, 2f)
-            } else {
-                1f
-            }
             fun submit(history: Int?) {
                 val x = if (history == null) event.getX(pointer) else event.getHistoricalX(pointer, history)
                 val y = if (history == null) event.getY(pointer) else event.getHistoricalY(pointer, history)
-                if (style.pressure) EpdController.quadTo(view, x, y, UpdateMode.DU, pressure(history)) else EpdController.quadTo(view, x, y, UpdateMode.DU)
+                if (style.tool == "pen") EpdController.quadTo(view, x, y, UpdateMode.DU, FIXED_PRESSURE) else EpdController.quadTo(view, x, y, UpdateMode.DU)
                 submittedPoints++
             }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     if (configuredBounds?.contains(event.getX(pointer).toInt(), event.getY(pointer).toInt()) != true) return
                     drawing = true
-                    if (style.pressure) EpdController.moveTo(view, event.getX(pointer), event.getY(pointer), configuredWidth, pressure(null)) else EpdController.moveTo(view, event.getX(pointer), event.getY(pointer), configuredWidth)
+                    if (style.tool == "pen") EpdController.moveTo(view, event.getX(pointer), event.getY(pointer), configuredWidth, FIXED_PRESSURE) else EpdController.moveTo(view, event.getX(pointer), event.getY(pointer), configuredWidth)
                     submittedPoints++
                 }
                 MotionEvent.ACTION_MOVE -> if (drawing) {
@@ -175,6 +169,12 @@ class BooxPenBridge(private val view: InkCanvas) {
         if (Looper.myLooper() == Looper.getMainLooper()) view.failed("BOOX direct ink unavailable: $failure") else view.post { view.failed("BOOX direct ink unavailable: $failure") }
     }
     companion object {
+        /** Neutral native pressure uses the same width scale as Android Canvas. */
+        const val WIDTH_CALIBRATION = 1f
+
+        /** BOOX charcoal spreads beyond its configured centerline width. */
+        const val PENCIL_WIDTH_CALIBRATION = 0.6f
+        private const val FIXED_PRESSURE = 1f
         val supported get() = Build.MANUFACTURER.contains("onyx", true) || Build.BRAND.contains("onyx", true)
     }
 }

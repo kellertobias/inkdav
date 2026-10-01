@@ -25,16 +25,27 @@ object PageRenderer {
         require(renderer.pageCount in 1..500) { "PDF must contain 1–500 pages" }
         (0 until renderer.pageCount).map { index -> renderer.openPage(index).use { ((it.width * 25400L / 72) to (it.height * 25400L / 72)) } }
     }
-    fun image(file: File, svg: Boolean): Bitmap? {
+    fun image(file: File, svg: Boolean, maxWidth: Int = 1600, maxHeight: Int = 2000, allowSvgUpscale: Boolean = false): Bitmap? {
         if (svg) {
             return SVG.getFromInputStream(file.inputStream()).let { document ->
-                Bitmap.createBitmap(1200, 1200, Bitmap.Config.ARGB_8888).also { document.renderToCanvas(Canvas(it)) }
+                val box = document.documentViewBox
+                val width = (box?.width() ?: document.documentWidth).takeIf { it > 0 && it.isFinite() } ?: 1200f
+                val height = (box?.height() ?: document.documentHeight).takeIf { it > 0 && it.isFinite() } ?: 1200f
+                val scale = min(maxWidth.toFloat() / width, maxHeight.toFloat() / height).coerceAtMost(if (allowSvgUpscale) 8f else 1f)
+                Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888).also {
+                    document.setDocumentWidth(it.width.toFloat())
+                    document.setDocumentHeight(it.height.toFloat())
+                    document.renderToCanvas(Canvas(it))
+                }
             }
         }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         var sample = 1
-        while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 2000) sample *= 2
-        return BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
+        while (bounds.outWidth / sample > maxWidth || bounds.outHeight / sample > maxHeight) sample *= 2
+        val bitmap = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+        val scale = min(maxWidth.toFloat() / bitmap.width, maxHeight.toFloat() / bitmap.height).coerceAtMost(1f)
+        if (scale == 1f) return bitmap
+        return Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true).also { bitmap.recycle() }
     }
 }

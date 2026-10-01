@@ -6,6 +6,7 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
+import de.tobisk.inkvault.ink.InkPresetSize
 import kotlin.math.sqrt
 import org.json.JSONObject
 
@@ -23,7 +24,8 @@ class PenPresetIcon(private val preset: JSONObject) : Drawable() {
         canvas.scale(bounds.width() / 24f, bounds.height() / 24f)
         val type = preset.optString("type", if (preset.optString("tool") == "marker") "Marker" else "Pen")
         LineIcon(type.lowercase(), if (active) Color.WHITE else Color.BLACK).apply { setBounds(0, 0, 21, 21) }.draw(canvas)
-        val radius = 1f + 3f * sqrt(preset.optLong("width", 600).coerceIn(50, 20000) / 20000f)
+        val normalized = (preset.optLong("width", InkPresetSize.MIN).coerceIn(InkPresetSize.MIN, InkPresetSize.MAX) - InkPresetSize.MIN).toFloat() / (InkPresetSize.MAX - InkPresetSize.MIN)
+        val radius = 1.5f + 2.5f * sqrt(normalized)
         paint.style = Paint.Style.FILL
         paint.color = if (active) Color.BLACK else Color.WHITE
         canvas.drawCircle(19f, 19f, radius + 1f, paint)

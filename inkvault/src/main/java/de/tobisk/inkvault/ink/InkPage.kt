@@ -6,6 +6,58 @@ import kotlin.math.hypot
 data class InkPoint(val x: Long, val y: Long, val time: Long, val pressure: Long? = null, val tilt: Long? = null) {
     fun value() = listOf(x, y, time, pressure, tilt)
 }
+
+/** A small low-pass filter removes digitizer noise without adding a visible pen lag. */
+class InkPressureSmoother {
+    private var previous: Float? = null
+
+    fun reset() {
+        previous = null
+    }
+
+    fun sample(raw: Float, sensitivity: Float): Float {
+        val target = value(raw, sensitivity)
+        val value = previous?.let { it + (target - it) * RESPONSE } ?: target
+        previous = value
+        return value
+    }
+
+    companion object {
+        const val MIN = 0.2f
+        const val MAX = 2f
+        private const val RESPONSE = 0.35f
+
+        fun value(raw: Float, sensitivity: Float) = (1f + (raw - 1f) * sensitivity).coerceIn(MIN, MAX)
+    }
+}
+
+/** Physical widths exposed by the preset editor, calibrated for the Note Air canvas. */
+object InkPresetSize {
+    const val MIN = 300L
+    const val MAX = 4000L
+    const val STEP = 10L
+    const val MIN_VISIBLE = 200L
+    const val RANGE_VERSION = 3
+    const val SLIDER_MAX = ((MAX - MIN) / STEP).toInt()
+
+    fun fromSlider(progress: Int) = MIN + progress.coerceIn(0, SLIDER_MAX) * STEP
+
+    fun toSlider(width: Long) = ((width.coerceIn(MIN, MAX) - MIN) / STEP).toInt()
+
+    /** Undo the short-lived v2 proportional migration and recover the old width. */
+    fun restoreV2(width: Long): Long {
+        val usefulLegacyMax = 4000L
+        val legacyMin = 50L
+        val v2Min = 1000L
+        val candidates = (legacyMin..usefulLegacyMax step STEP).filter { old ->
+            val position = (old - legacyMin).toDouble() / (usefulLegacyMax - legacyMin)
+            val migrated = (v2Min + position * (MAX - v2Min)).toLong()
+            v2Min + ((migrated - v2Min) / STEP) * STEP == width
+        }
+        return (candidates.lastOrNull() ?: width).coerceIn(MIN, MAX)
+    }
+}
+
 data class InkStyle(val tool: String = "pen", val color: Long = 0xff000000, val width: Long = 600, val pressure: Boolean = false, val extra: Map<String, Any?> = emptyMap()) {
     init {
         require(tool in setOf("pen", "marker"))

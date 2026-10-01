@@ -9,6 +9,43 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CoreTest {
+    @Test fun pressureSmoothingKeepsTheConfiguredBaselineAndDampsSensorJitter() {
+        val pressure = InkPressureSmoother()
+        assertEquals(1f, pressure.sample(0.2f, 0f), 0.0001f)
+        assertEquals(1f, pressure.sample(1.8f, 0f), 0.0001f)
+
+        pressure.reset()
+        assertEquals(0.5f, pressure.sample(0.5f, 1f), 0.0001f)
+        assertEquals(0.85f, pressure.sample(1.5f, 1f), 0.0001f)
+        assertEquals(1.0775f, pressure.sample(1.5f, 1f), 0.0001f)
+
+        pressure.reset()
+        assertEquals(InkPressureSmoother.MIN, pressure.sample(-10f, 1f), 0.0001f)
+        pressure.reset()
+        assertEquals(InkPressureSmoother.MAX, pressure.sample(10f, 1f), 0.0001f)
+    }
+
+    @Test fun penSizeControlUsesTheVisiblePartOfTheLegacyRange() {
+        assertEquals(300L, InkPresetSize.fromSlider(0))
+        assertEquals(4000L, InkPresetSize.fromSlider(InkPresetSize.SLIDER_MAX))
+        assertEquals(220, InkPresetSize.toSlider(2500))
+        assertEquals(300L, InkPresetSize.restoreV2(1180))
+        assertEquals(900L, InkPresetSize.restoreV2(1640))
+        assertEquals(4000L, InkPresetSize.restoreV2(4000))
+    }
+
+    @Test fun booxPreviewUsesTheMeasuredNativeWidthCalibration() {
+        assertEquals(1f, de.tobisk.inkvault.ui.BooxPenBridge.WIDTH_CALIBRATION, 0f)
+        assertEquals(0.6f, de.tobisk.inkvault.ui.BooxPenBridge.PENCIL_WIDTH_CALIBRATION, 0f)
+        assertEquals(3f, de.tobisk.inkvault.ui.InkCanvas.MIN_RENDERED_STROKE_PIXELS, 0f)
+        assertEquals(16, de.tobisk.inkvault.ui.InkCanvas.PENCIL_TEXTURE_SIZE)
+        assertEquals(44, de.tobisk.inkvault.ui.InkCanvas.PENCIL_TEXTURE_HOLE_CUTOFF)
+        assertEquals(96, de.tobisk.inkvault.ui.InkCanvas.PENCIL_TEXTURE_LIGHT_CUTOFF)
+        assertEquals(96, de.tobisk.inkvault.ui.InkCanvas.PENCIL_TEXTURE_LIGHT_ALPHA)
+        assertEquals(180, de.tobisk.inkvault.ui.InkCanvas.PENCIL_TEXTURE_DARK_ALPHA)
+        assertEquals(1.35f, de.tobisk.inkvault.ui.InkCanvas.PENCIL_TEXTURE_PIXEL_SIZE, 0f)
+    }
+
     @Test fun typingActionsFormatWholeLinesAndKeepAnInsertionCursorInsideEmphasis() {
         val edit = de.tobisk.inkvault.ui.MarkdownEdit.format("First\nSecond", 9, 9, "heading")
         assertEquals(6, edit.start)

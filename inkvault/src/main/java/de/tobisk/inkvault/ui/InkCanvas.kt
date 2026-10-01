@@ -8,6 +8,7 @@ import android.view.VelocityTracker
 import android.view.View
 import android.widget.ScrollView
 import de.tobisk.inkvault.ink.*
+import kotlin.math.hypot
 import kotlin.math.min
 
 /** Only this view accepts ink, and only TOOL_TYPE_STYLUS / ERASER can edit it. */
@@ -23,7 +24,7 @@ class InkCanvas(context: Context) : View(context) {
     var scrollingPage = false
         set(value) {
             field = value
-            contentDescription = if (value) "Document page. Stylus writes; a finger scrolls between bounded pages." else "Document page. Stylus writes in write mode; two fingers zoom and pan."
+            contentDescription = if (value) "Document page. Stylus writes; one finger scrolls pages and two fingers zoom." else "Document page. Stylus writes in write mode; two fingers zoom and pan."
         }
     var fitToViewport = false
     var pageFitMode = PageFitMode.WIDTH
@@ -73,9 +74,11 @@ class InkCanvas(context: Context) : View(context) {
     private var activeErase = false
     var asset: (String) -> Bitmap? = { null }
     private val images = android.util.LruCache<String, Bitmap>(4)
+    private val pencilTextures = android.util.LruCache<Int, Bitmap>(8)
     private var activeBitmap: Bitmap? = null
     private var activeSamples = 0
     var pressureSensitivity = 1f
+    private val pressure = InkPressureSmoother()
     private var encodedUpperBound = 0L
     private var flattened: Bitmap? = null
     private var flattenedPage: InkPage? = null
@@ -99,6 +102,7 @@ class InkCanvas(context: Context) : View(context) {
     private var commandStart: InkPage? = null
     private var moving = false
     private var scrollFingerY = 0f
+    private var scrollDidPinch = false
     private var scrollVelocity: VelocityTracker? = null
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val scaleDetector = ScaleGestureDetector(
@@ -113,7 +117,15 @@ class InkCanvas(context: Context) : View(context) {
                     invalidate()
                     return true
                 }
+                val point = floatArrayOf(detector.focusX, detector.focusY)
+                Matrix().also {
+                    transform().invert(it)
+                    it.mapPoints(point)
+                }
                 zoom = (zoom * detector.scaleFactor).coerceIn(1f, 5f)
+                transform().mapPoints(point)
+                panX += detector.focusX - point[0]
+                panY += detector.focusY - point[1]
                 invalidate()
                 return true
             }
@@ -212,13 +224,15 @@ class InkCanvas(context: Context) : View(context) {
             postTranslate((width - page.width * scale) / 2 + panX, (height - page.height * scale) / 2 + panY)
         }
     }
-    private fun position(event: MotionEvent, index: Int, historical: Int? = null): InkPoint {
+    private fun position(event: MotionEvent, index: Int, historical: Int? = null, smoothPressure: Boolean = true): InkPoint {
         val xy = coordinates
         xy[0] = if (historical == null) event.getX(index) else event.getHistoricalX(index, historical)
         xy[1] = if (historical == null) event.getY(index) else event.getHistoricalY(index, historical)
         inverse.mapPoints(xy)
-        val pressure = if (historical == null) event.getPressure(index) else event.getHistoricalPressure(index, historical)
-        return InkPoint(xy[0].toLong(), xy[1].toLong(), if (historical == null) event.eventTime else event.getHistoricalEventTime(historical), ((1f + (pressure - 1f) * pressureSensitivity) * 1000).toLong().coerceIn(0, 2000), (event.getAxisValue(MotionEvent.AXIS_TILT, index) * 1000).toLong())
+        val rawPressure = if (historical == null) event.getPressure(index) else event.getHistoricalPressure(index, historical)
+        val pressureValue = if (smoothPressure) pressure.sample(rawPressure, pressureSensitivity) else InkPressureSmoother.value(rawPressure, pressureSensitivity)
+        val adjustedPressure = maxOf(pressureValue, InkPresetSize.MIN_VISIBLE.toFloat() / style.width)
+        return InkPoint(xy[0].toLong(), xy[1].toLong(), if (historical == null) event.eventTime else event.getHistoricalEventTime(historical), (adjustedPressure * 1000).toLong(), (event.getAxisValue(MotionEvent.AXIS_TILT, index) * 1000).toLong())
     }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -336,21 +350,38 @@ class InkCanvas(context: Context) : View(context) {
         }
     }
     fun drawStroke(canvas: Canvas, samples: List<InkPoint>, style: InkStyle, selected: Boolean) {
+        val matrixValues = FloatArray(9).also { canvas.matrix.getValues(it) }
+        val canvasScale = hypot(matrixValues[Matrix.MSCALE_X], matrixValues[Matrix.MSKEW_Y]).coerceAtLeast(0.00001f)
+        val minimumVisibleWidth = MIN_RENDERED_STROKE_PIXELS / canvasScale
+        val brushType = style.extra["brushType"] as? String ?: if (style.tool == "marker") "Marker" else "Pen"
+        val opacity = ((style.extra["opacity"] as? Long)?.toInt() ?: 100).coerceIn(0, 100)
         paint.reset()
-        paint.isAntiAlias = !miniature
+        paint.isAntiAlias = !miniature && style.width > minimumVisibleWidth
         paint.color = style.color.toInt()
-        paint.alpha = if (style.tool == "marker") 100 else 255
-        (style.extra["opacity"] as? Long)?.let { paint.alpha = (it * 255 / 100).toInt().coerceIn(0, 255) }
+        paint.alpha = (
+            opacity * when (brushType) {
+                "Marker" -> MARKER_ALPHA
+                else -> 255
+            } / 100
+            ).coerceIn(0, 255)
+        if (brushType == "Pencil") paint.shader = pencilShader(style.color.toInt(), canvasScale)
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
         paint.style = Paint.Style.STROKE
-        for (index in 0 until maxOf(1, samples.size - 1)) {
-            val a = samples[index]
-            val b = samples[minOf(index + 1, samples.lastIndex)]
-            paint.strokeWidth = style.width.toFloat() * if (style.pressure) ((b.pressure ?: 1000) / 1000f).coerceIn(0.2f, 2f) else 1f
-            if (miniature) paint.strokeWidth = maxOf(paint.strokeWidth, page.width.toFloat() / width.coerceAtLeast(1) * 2)
-            canvas.drawLine(a.x.toFloat(), a.y.toFloat(), b.x.toFloat(), b.y.toFloat(), paint)
+        paint.strokeWidth = maxOf(minimumVisibleWidth, InkPresetSize.MIN_VISIBLE.toFloat(), style.width.toFloat())
+        if (miniature) paint.strokeWidth = maxOf(paint.strokeWidth, page.width.toFloat() / width.coerceAtLeast(1) * 2)
+        val path = if (samples.size > 1) {
+            Path().apply {
+                moveTo(samples.first().x.toFloat(), samples.first().y.toFloat())
+                samples.drop(1).forEach { lineTo(it.x.toFloat(), it.y.toFloat()) }
+            }
+        } else {
+            null
         }
+        fun renderPath() {
+            if (path == null) canvas.drawPoint(samples.first().x.toFloat(), samples.first().y.toFloat(), paint) else canvas.drawPath(path, paint)
+        }
+        renderPath()
         if (selected) {
             paint.alpha = 255
             paint.color = Color.BLACK
@@ -386,24 +417,41 @@ class InkCanvas(context: Context) : View(context) {
             }
             if (scrollingPage) {
                 val scroll = scrollingParent() ?: return false
+                scaleDetector.onTouchEvent(event)
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         pauseHardware()
                         parent.requestDisallowInterceptTouchEvent(true)
                         scrollFingerY = event.rawY
+                        scrollDidPinch = false
                         scrollVelocity?.recycle()
                         scrollVelocity = VelocityTracker.obtain().also { it.addMovement(event) }
                     }
+                    MotionEvent.ACTION_POINTER_DOWN -> {
+                        scrollDidPinch = true
+                        scrollVelocity?.recycle()
+                        scrollVelocity = null
+                    }
+                    MotionEvent.ACTION_POINTER_UP -> {
+                        val remaining = if (event.actionIndex == 0) 1 else 0
+                        scrollFingerY = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                            event.getRawY(remaining)
+                        } else {
+                            event.getY(remaining) + (event.rawY - event.y)
+                        }
+                    }
                     MotionEvent.ACTION_MOVE -> {
-                        scrollVelocity?.addMovement(event)
-                        scroll.scrollBy(0, (scrollFingerY - event.rawY).toInt())
-                        scrollFingerY = event.rawY
+                        if (event.pointerCount == 1) {
+                            scrollVelocity?.addMovement(event)
+                            scroll.scrollBy(0, (scrollFingerY - event.rawY).toInt())
+                            scrollFingerY = event.rawY
+                        }
                     }
                     MotionEvent.ACTION_UP -> {
                         scrollVelocity?.apply {
                             addMovement(event)
                             computeCurrentVelocity(1000)
-                            scroll.fling(-yVelocity.toInt())
+                            if (!scrollDidPinch) scroll.fling(-yVelocity.toInt())
                             recycle()
                         }
                         scrollVelocity = null
@@ -442,6 +490,7 @@ class InkCanvas(context: Context) : View(context) {
         }
         if (action == MotionEvent.ACTION_DOWN) {
             navigationReady = false
+            pressure.reset()
             if (scrollingPage) parent.requestDisallowInterceptTouchEvent(true)
             activated()
             requestUnbufferedDispatch(event)
@@ -451,7 +500,8 @@ class InkCanvas(context: Context) : View(context) {
         if (action == MotionEvent.ACTION_DOWN) {
             transform().invert(inverse)
         }
-        val p = position(event, stylus)
+        // MOVE history must enter the pressure filter before the current sample.
+        val p = position(event, stylus, smoothPressure = action != MotionEvent.ACTION_MOVE)
         val erasing = tool == "eraser" || event.getToolType(stylus) == MotionEvent.TOOL_TYPE_ERASER
         when (action) {
             MotionEvent.ACTION_DOWN -> {
@@ -490,7 +540,7 @@ class InkCanvas(context: Context) : View(context) {
                         return true
                     }
                     for (h in 0 until event.historySize) points.add(position(event, stylus, h))
-                    points.add(p)
+                    points.add(position(event, stylus))
                 }
             }
             MotionEvent.ACTION_UP -> if (activePointer == event.getPointerId(stylus)) {
@@ -589,7 +639,8 @@ class InkCanvas(context: Context) : View(context) {
         val scale = FloatArray(9)
         transform().getValues(scale)
         val bridge = hardware ?: BooxPenBridge(this).also { hardware = it }
-        bridge.configure(Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt()), style.width * scale[Matrix.MSCALE_X], style)
+        val widthCalibration = if (style.extra["brushType"] == "Pencil") BooxPenBridge.PENCIL_WIDTH_CALIBRATION else BooxPenBridge.WIDTH_CALIBRATION
+        bridge.configure(Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt()), style.width * scale[Matrix.MSCALE_X] * widthCalibration, style)
     }
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -633,6 +684,40 @@ class InkCanvas(context: Context) : View(context) {
         infiniteBitmap = null
         infinitePage = null
         images.evictAll()
+        pencilTextures.evictAll()
         super.onDetachedFromWindow()
+    }
+
+    private fun pencilShader(color: Int, canvasScale: Float): BitmapShader {
+        val texture = pencilTextures.get(color) ?: Bitmap.createBitmap(PENCIL_TEXTURE_SIZE, PENCIL_TEXTURE_SIZE, Bitmap.Config.ARGB_8888).also { bitmap ->
+            var state = color xor 0x51f15e5
+            val pixels = IntArray(PENCIL_TEXTURE_SIZE * PENCIL_TEXTURE_SIZE) {
+                state = state * 1664525 + 1013904223
+                val grain = (state ushr 24) and 0xff
+                val alpha = when {
+                    grain < PENCIL_TEXTURE_HOLE_CUTOFF -> 0
+                    grain < PENCIL_TEXTURE_LIGHT_CUTOFF -> PENCIL_TEXTURE_LIGHT_ALPHA
+                    else -> PENCIL_TEXTURE_DARK_ALPHA + (grain - PENCIL_TEXTURE_LIGHT_CUTOFF) * (255 - PENCIL_TEXTURE_DARK_ALPHA) / (255 - PENCIL_TEXTURE_LIGHT_CUTOFF)
+                }
+                (alpha shl 24) or (color and 0x00ffffff)
+            }
+            bitmap.setPixels(pixels, 0, PENCIL_TEXTURE_SIZE, 0, 0, PENCIL_TEXTURE_SIZE, PENCIL_TEXTURE_SIZE)
+            pencilTextures.put(color, bitmap)
+        }
+        return BitmapShader(texture, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT).apply {
+            val pixel = PENCIL_TEXTURE_PIXEL_SIZE / canvasScale
+            setLocalMatrix(Matrix().apply { setScale(pixel, pixel) })
+        }
+    }
+
+    companion object {
+        const val MIN_RENDERED_STROKE_PIXELS = 3f
+        const val MARKER_ALPHA = 100
+        const val PENCIL_TEXTURE_SIZE = 16
+        const val PENCIL_TEXTURE_HOLE_CUTOFF = 44
+        const val PENCIL_TEXTURE_LIGHT_CUTOFF = 96
+        const val PENCIL_TEXTURE_LIGHT_ALPHA = 96
+        const val PENCIL_TEXTURE_DARK_ALPHA = 180
+        const val PENCIL_TEXTURE_PIXEL_SIZE = 1.35f
     }
 }
