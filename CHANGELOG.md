@@ -1,3 +1,15 @@
+## [1.5.0](https://github.com/kellertobias/[secure]/compare/v1.4.0...v1.5.0) (2026-10-01)
+
+### Features
+
+* **dav:** trust self-signed server certificates during server setup ([f6beb12](https://github.com/kellertobias/[secure]/commit/f6beb12eecdb760cfed5a500f1faa85dbc6c3b15))
+* **inkvault:** zoomable images, smoothed pen pressure and calibrated pen sizes ([24f4703](https://github.com/kellertobias/[secure]/commit/24f47033deb5eb3897b1a90f9ef128fdba98bedb))
+* **launcher:** add Ink Launcher home screen with calendar and notes feeds ([cc30636](https://github.com/kellertobias/[secure]/commit/cc3063604f8aab3db10f78fccc504c66c4b5e2b0))
+
+### Bug Fixes
+
+* **sync:** stop reporting "Up to date" while an account has a sync error ([5186ed7](https://github.com/kellertobias/[secure]/commit/5186ed781a41c47bf742c1c2a6b986b43f0def7f)), closes [#9](https://github.com/kellertobias/[secure]/issues/9)
+
 ## [1.4.0](https://github.com/kellertobias/[secure]/compare/v1.3.7...v1.4.0) (2026-09-09)
 
 ### Features

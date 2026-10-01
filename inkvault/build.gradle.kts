@@ -11,8 +11,8 @@ android {
         applicationId = "de.tobisk.inkvault"
         minSdk = 26
         targetSdk = 36
-        versionCode = providers.gradleProperty("inkVaultVersionCode").getOrElse("1004000").toInt()
-        versionName = providers.gradleProperty("inkVaultVersion").getOrElse("1.4.0")
+        versionCode = providers.gradleProperty("inkVaultVersionCode").getOrElse("1005000").toInt()
+        versionName = providers.gradleProperty("inkVaultVersion").getOrElse("1.5.0")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
