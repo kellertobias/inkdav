@@ -57,6 +57,7 @@ import de.tobisk.inkdav.data.*
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.ManualSyncState
+import de.tobisk.inkdav.sync.syncHeaderStatus
 import de.tobisk.inkdav.tasks.ScheduleBucketer
 import de.tobisk.inkdav.update.InstallUpdateResult
 import de.tobisk.inkdav.update.UpdateInstaller
@@ -307,12 +308,8 @@ private fun CalendarHeader(
             Text(date.format(DateTimeFormatter.ofPattern("MMMM")), fontSize = 26.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
             Text(date.year.toString(), fontSize = 15.sp, lineHeight = 16.sp, color = MutedInk, fontWeight = FontWeight.Medium)
         }
-        if (syncState.label != null) {
-            Text(syncState.label, color = if (syncState.label.contains("failed", true)) Warning else MutedInk, fontSize = 13.sp)
-        } else if (pending > 0) {
-            Text("$pending waiting", color = Warning, fontSize = 13.sp)
-        } else if (accounts.isNotEmpty()) {
-            Text("Up to date", color = MutedInk, fontSize = 13.sp)
+        syncHeaderStatus(syncState, pending, accounts)?.let { status ->
+            Text(status.label, color = if (status.warning) Warning else MutedInk, fontSize = 13.sp)
         }
         Spacer(Modifier.weight(1f))
         Box {
