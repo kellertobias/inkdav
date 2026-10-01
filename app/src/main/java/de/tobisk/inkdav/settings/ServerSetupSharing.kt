@@ -26,6 +26,7 @@ private const val KEY_USERNAME = "username"
 private const val KEY_KIND = "kind"
 private const val KEY_ENABLED = "enabled"
 private const val KEY_SECRET = "secret"
+private const val KEY_TRUSTED_CERTIFICATE = "trusted-certificate-sha256"
 private const val REVISION_PREFERENCES = "server_setup_replication"
 private const val REVISION_KEY = "revision"
 
@@ -119,6 +120,7 @@ private suspend fun snapshot(context: Context, dao: InkDavDao, credentials: Cred
             putString(KEY_USERNAME, account.username)
             putString(KEY_KIND, account.kind.name)
             putBoolean(KEY_ENABLED, account.enabled)
+            putString(KEY_TRUSTED_CERTIFICATE, account.trustedCertificateSha256)
             putByteArray(KEY_SECRET, secret)
         }
     }
@@ -149,7 +151,8 @@ private suspend fun applySnapshot(context: Context, dao: InkDavDao, credentials:
                 kind = AccountKind.valueOf(requireNotNull(value.getString(KEY_KIND))),
                 enabled = value.getBoolean(KEY_ENABLED),
                 lastSyncAt = existing?.lastSyncAt,
-                lastSyncError = existing?.lastSyncError
+                lastSyncError = existing?.lastSyncError,
+                trustedCertificateSha256 = value.getString(KEY_TRUSTED_CERTIFICATE)
             )
         )
         value.getByteArray(KEY_SECRET)?.let { secret ->

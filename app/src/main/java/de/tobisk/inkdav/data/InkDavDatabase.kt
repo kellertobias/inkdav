@@ -54,7 +54,7 @@ class EnumConverters {
         CalendarOccurrenceEntity::class, MirrorBindingEntity::class, MirrorEntryEntity::class,
         TaskWidgetConfigEntity::class, TaskWidgetExcludedListEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 @TypeConverters(EnumConverters::class)
@@ -69,7 +69,7 @@ abstract class InkDavDatabase : RoomDatabase() {
                 context.applicationContext,
                 InkDavDatabase::class.java,
                 "inkdav.db"
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -108,6 +108,12 @@ abstract class InkDavDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_task_widget_exclusions_appWidgetId ON task_widget_exclusions(appWidgetId)")
                 db.execSQL("DROP INDEX IF EXISTS index_events_collectionId_remoteHref")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_events_collectionId_remoteHref ON events(collectionId, remoteHref)")
+            }
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE accounts ADD COLUMN trustedCertificateSha256 TEXT")
             }
         }
     }

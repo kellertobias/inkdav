@@ -5,6 +5,7 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,6 +42,24 @@ class InkDavMigrationTest {
             database.query("SELECT COUNT(*) FROM mirror_bindings").use { cursor ->
                 cursor.moveToFirst()
                 assertEquals(0, cursor.getInt(0))
+            }
+        }
+    }
+
+    @Test
+    fun migrateTwoToThreeAddsUntrustedCertificateColumn() {
+        helper.createDatabase(NAME, 2).apply {
+            execSQL(
+                "INSERT INTO accounts (id, displayName, baseUrl, username, kind, enabled, lastSyncAt, lastSyncError) " +
+                    "VALUES ('account', 'DAV', 'https://example.test/', 'user', 'DAV', 1, NULL, NULL)"
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(NAME, 3, true, InkDavDatabase.MIGRATION_2_3).use { database ->
+            database.query("SELECT trustedCertificateSha256 FROM accounts WHERE id = 'account'").use { cursor ->
+                cursor.moveToFirst()
+                assertTrue(cursor.isNull(0))
             }
         }
     }

@@ -8,6 +8,7 @@ import java.net.URI
 import java.time.Instant
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +31,10 @@ class OkHttpDavClient(
         .followRedirects(false)
         .build()
 ) : DavClient {
+    private val pinnedClients = ConcurrentHashMap<String, OkHttpClient>()
+
+    private fun clientFor(account: DavAccountEntity): OkHttpClient = account.trustedCertificateSha256?.let { pin -> pinnedClients.getOrPut(pin) { http.trustingCertificate(pin) } } ?: http
+
     override suspend fun discoverCollections(account: DavAccountEntity, password: CharArray): List<DavResource> {
         val principal = propfind(account, password, account.baseUrl, 0, DISCOVERY_PROPERTIES).firstOrNull()
         val principalUrl = principal?.currentUserPrincipalHref?.let { resolve(account.baseUrl, it) } ?: account.baseUrl
@@ -256,7 +261,7 @@ class OkHttpDavClient(
     private fun execute(account: DavAccountEntity, password: CharArray, builder: Request.Builder): okhttp3.Response {
         val passwordString = password.concatToString()
         // Callers own and wipe the CharArray after a complete multi-request DAV operation.
-        return http.newCall(builder.header("Authorization", Credentials.basic(account.username, passwordString)).build()).execute()
+        return clientFor(account).newCall(builder.header("Authorization", Credentials.basic(account.username, passwordString)).build()).execute()
     }
 
     internal fun parseMultiStatus(stream: InputStream, parser: XmlPullParser = Xml.newPullParser()): ParsedMultiStatus {

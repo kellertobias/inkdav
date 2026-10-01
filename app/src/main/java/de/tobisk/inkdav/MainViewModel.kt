@@ -11,7 +11,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import de.tobisk.inkdav.data.*
+import de.tobisk.inkdav.dav.ServerCertificate
+import de.tobisk.inkdav.dav.inspectServerCertificate
 import de.tobisk.inkdav.dav.normalizeDavBaseUrl
+import de.tobisk.inkdav.dav.sameTlsEndpoint
 import de.tobisk.inkdav.files.LocalFileBrowser
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.files.LocalFolderLocation
@@ -29,11 +32,13 @@ import java.io.File
 import java.time.*
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class Destination(val label: String, val mark: String) {
     CALENDAR("Calendar", "□"),
@@ -191,13 +196,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sync()
     }
 
-    fun addAccount(name: String, baseUrl: String, username: String, password: CharArray, nasDrive: Boolean) {
+    fun addAccount(
+        name: String,
+        baseUrl: String,
+        username: String,
+        password: CharArray,
+        nasDrive: Boolean,
+        trustedCertificateSha256: String?
+    ) {
         viewModelScope.launch {
             val id = UUID.randomUUID().toString()
             val kind = if (nasDrive) AccountKind.NASDRIVE else AccountKind.DAV
             val normalized = normalizeDavBaseUrl(baseUrl, kind)
             dao.upsertAccount(
-                DavAccountEntity(id, name.trim(), normalized, username.trim(), kind)
+                DavAccountEntity(
+                    id,
+                    name.trim(),
+                    normalized,
+                    username.trim(),
+                    kind,
+                    trustedCertificateSha256 = trustedCertificateSha256
+                )
             )
             container.credentials.put(id, password)
             container.serverSetup.publish()
@@ -210,6 +229,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             container.credentials.put(account.id, password)
             dao.upsertAccount(account.copy(lastSyncError = null))
+            container.serverSetup.publish()
+            sync()
+        }
+    }
+
+    suspend fun inspectCertificate(url: String): Result<ServerCertificate> = withContext(Dispatchers.IO) { runCatching { inspectServerCertificate(url) } }
+
+    fun updateTrustedCertificate(account: DavAccountEntity, sha256: String) {
+        viewModelScope.launch {
+            dao.upsertAccount(account.copy(trustedCertificateSha256 = sha256, lastSyncError = null))
             container.serverSetup.publish()
             sync()
         }
@@ -533,5 +562,6 @@ internal fun DavAccountEntity.copyForEndpoint(id: String, name: String, baseUrl:
     baseUrl = normalizeDavBaseUrl(baseUrl, kind),
     enabled = true,
     lastSyncAt = null,
-    lastSyncError = null
+    lastSyncError = null,
+    trustedCertificateSha256 = trustedCertificateSha256?.takeIf { sameTlsEndpoint(this.baseUrl, baseUrl) }
 )

@@ -24,7 +24,9 @@ data class DavAccountEntity(
     val kind: AccountKind = AccountKind.DAV,
     val enabled: Boolean = true,
     val lastSyncAt: Long? = null,
-    val lastSyncError: String? = null
+    val lastSyncError: String? = null,
+    /** SHA-256 fingerprint of a self-signed server certificate the user explicitly trusted. */
+    val trustedCertificateSha256: String? = null
 )
 
 @Entity(

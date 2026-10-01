@@ -32,4 +32,12 @@ class AccountCopyTest {
         assertNull(copy.lastSyncAt)
         assertNull(copy.lastSyncError)
     }
+
+    @Test
+    fun `copy keeps a trusted certificate only on the same TLS endpoint`() {
+        val source = DavAccountEntity("source", "Calendar", "https://dav.example.test/calendar/", "tobias", trustedCertificateSha256 = "AA:BB")
+
+        assertEquals("AA:BB", source.copyForEndpoint("same", "Tasks", "https://dav.example.test/tasks").trustedCertificateSha256)
+        assertNull(source.copyForEndpoint("other", "Tasks", "https://other.example.test/tasks").trustedCertificateSha256)
+    }
 }

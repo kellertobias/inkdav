@@ -6,6 +6,7 @@ import de.tobisk.inkdav.dav.DavClient
 import de.tobisk.inkdav.dav.DavHttpException
 import de.tobisk.inkdav.dav.IcalendarCodec
 import de.tobisk.inkdav.dav.RecurrenceProjector
+import de.tobisk.inkdav.dav.describeSyncError
 import de.tobisk.inkdav.dav.normalizeDavBaseUrl
 import de.tobisk.inkdav.files.MirrorSyncEngine
 import de.tobisk.inkdav.security.CredentialStore
@@ -155,7 +156,7 @@ class SyncEngine(
             }
             dao.upsertAccount(account.copy(lastSyncAt = System.currentTimeMillis(), lastSyncError = null))
         } catch (error: Exception) {
-            dao.upsertAccount(account.copy(lastSyncError = error.message ?: error::class.simpleName))
+            dao.upsertAccount(account.copy(lastSyncError = describeSyncError(error)))
             throw error
         } finally {
             password.fill('\u0000')

@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +55,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.tobisk.inkdav.*
 import de.tobisk.inkdav.R
 import de.tobisk.inkdav.data.*
+import de.tobisk.inkdav.dav.ServerCertificate
+import de.tobisk.inkdav.dav.UNTRUSTED_CERTIFICATE_ERROR
 import de.tobisk.inkdav.files.LocalFileEntry
 import de.tobisk.inkdav.settings.InkDavSettings
 import de.tobisk.inkdav.sync.ManualSyncState
@@ -68,6 +71,7 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val Paper = Color(0xfffaf9f4)
@@ -1769,6 +1773,7 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
     var credentialAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     var copyAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     var removalAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
+    var certificateAccount by remember { mutableStateOf<DavAccountEntity?>(null) }
     val updateState by model.updateState.collectAsStateWithLifecycle()
     val accountOperationError by model.accountOperationError.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -1821,10 +1826,18 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
                 Text(account.displayName, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text("${account.kind.name} · ${account.username}", color = MutedInk)
                 Text(account.baseUrl, color = MutedInk)
+                account.trustedCertificateSha256?.let { sha256 ->
+                    Text("Self-signed certificate · SHA-256 ${sha256.take(11)}…${sha256.takeLast(11)}", color = MutedInk, fontSize = 13.sp)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     InkButton("Copy account") { copyAccount = account }
                     InkButton("Change secret") { credentialAccount = account }
                     InkButton("Remove account") { removalAccount = account }
+                }
+                if (account.trustedCertificateSha256 != null) {
+                    InkButton("Trust renewed certificate") { certificateAccount = account }
+                } else if (account.lastSyncError?.startsWith(UNTRUSTED_CERTIFICATE_ERROR) == true) {
+                    InkButton("Trust self-signed certificate") { certificateAccount = account }
                 }
             }
         }
@@ -1938,7 +1951,13 @@ private fun SettingsScreen(model: MainViewModel, accounts: List<DavAccountEntity
             }
         }
     }
-    if (showAccount) AccountEditor(model.appFeature, { showAccount = false }, model::addAccount)
+    if (showAccount) AccountEditor(model.appFeature, { showAccount = false }, model::inspectCertificate, model::addAccount)
+    certificateAccount?.let { account ->
+        CertificateTrustDialog(account, model::inspectCertificate, { certificateAccount = null }) { sha256 ->
+            model.updateTrustedCertificate(account, sha256)
+            certificateAccount = null
+        }
+    }
     copyAccount?.let { account ->
         CopyAccountEditor(account, { copyAccount = null }) { name, url ->
             model.copyAccount(account, name, url)
@@ -2030,19 +2049,36 @@ private fun SettingPanel(title: String, content: @Composable ColumnScope.() -> U
 }
 
 @Composable
-private fun AccountEditor(feature: AppFeature, close: () -> Unit, save: (String, String, String, CharArray, Boolean) -> Unit) {
+private fun AccountEditor(
+    feature: AppFeature,
+    close: () -> Unit,
+    inspect: suspend (String) -> Result<ServerCertificate>,
+    save: (String, String, String, CharArray, Boolean, String?) -> Unit
+) {
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var selfSigned by remember { mutableStateOf(false) }
+    var certificate by remember { mutableStateOf<ServerCertificate?>(null) }
+    var inspecting by remember { mutableStateOf(false) }
+    var inspectionError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val nas = feature == AppFeature.FILES
     InkAlertDialog(
         onDismissRequest = close,
         title = { Text(if (nas) "Add NASDrive server" else "Add DAV server") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(name, { name = it }, label = { Text("Name") })
-                OutlinedTextField(url, { url = it }, label = { Text(if (nas) "NASDrive URL (ending /webdav/)" else "CalDAV/WebDAV URL") })
+                OutlinedTextField(url, {
+                    url = it
+                    certificate = null
+                    inspectionError = null
+                }, label = { Text(if (nas) "NASDrive URL (ending /webdav/)" else "CalDAV/WebDAV URL") })
                 OutlinedTextField(user, { user = it }, label = { Text(if (nas) "Device access key" else "Username") })
                 OutlinedTextField(
                     password,
@@ -2051,22 +2087,102 @@ private fun AccountEditor(feature: AppFeature, close: () -> Unit, save: (String,
                     visualTransformation = PasswordVisualTransformation()
                 )
                 if (nas) Text("Use HTTPS device credentials, not the interactive OIDC password.", color = MutedInk)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(selfSigned, {
+                        selfSigned = it
+                        certificate = null
+                        inspectionError = null
+                    })
+                    Text("Server uses a self-signed certificate")
+                }
+                if (selfSigned && certificate == null && !inspecting) {
+                    Text("InkDAV will fetch the server certificate so you can compare its fingerprint before trusting it.", color = MutedInk)
+                }
+                if (inspecting) Text("Fetching certificate…", color = MutedInk)
+                inspectionError?.let { Text(it, color = Warning) }
+                certificate?.let { CertificateDetails(it) }
             }
         },
         confirmButton = {
-            InkButton("Save") {
-                if (name.isNotBlank() &&
-                    url.startsWith("https://") &&
-                    user.isNotBlank() &&
-                    password.isNotEmpty()
-                ) {
-                    save(name, url, user, password.toCharArray(), nas)
-                    close()
+            InkButton(if (certificate != null) "Trust and save" else "Save", enabled = !inspecting) {
+                if (name.isBlank() || !url.startsWith("https://") || user.isBlank() || password.isEmpty()) return@InkButton
+                val trusted = certificate
+                when {
+                    !selfSigned || trusted != null -> {
+                        save(name, url, user, password.toCharArray(), nas, trusted?.sha256)
+                        close()
+                    }
+                    else -> scope.launch {
+                        inspecting = true
+                        inspectionError = null
+                        inspect(url).onSuccess { certificate = it }
+                            .onFailure { inspectionError = "Could not read the certificate: ${it.message ?: it::class.simpleName}" }
+                        inspecting = false
+                    }
                 }
             }
         },
         dismissButton = { InkButton("Cancel", action = close) }
     )
+}
+
+@Composable
+private fun CertificateTrustDialog(
+    account: DavAccountEntity,
+    inspect: suspend (String) -> Result<ServerCertificate>,
+    close: () -> Unit,
+    trust: (String) -> Unit
+) {
+    var result by remember(account.id) { mutableStateOf<Result<ServerCertificate>?>(null) }
+    LaunchedEffect(account.id) { result = inspect(account.baseUrl) }
+    val certificate = result?.getOrNull()
+    InkAlertDialog(
+        onDismissRequest = close,
+        title = { Text("Trust server certificate") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(account.displayName, fontWeight = FontWeight.Bold)
+                when {
+                    result == null -> Text("Fetching certificate…", color = MutedInk)
+                    certificate == null -> Text(
+                        "Could not read the certificate: ${result?.exceptionOrNull()?.message}",
+                        color = Warning
+                    )
+                    certificate.sha256 == account.trustedCertificateSha256 -> {
+                        CertificateDetails(certificate)
+                        Text("This certificate is already trusted.", color = MutedInk)
+                    }
+                    else -> CertificateDetails(certificate)
+                }
+            }
+        },
+        confirmButton = {
+            InkButton("Trust", enabled = certificate != null) { certificate?.let { trust(it.sha256) } }
+        },
+        dismissButton = { InkButton("Cancel", action = close) }
+    )
+}
+
+@Composable
+private fun CertificateDetails(certificate: ServerCertificate) {
+    val expiry = certificate.notAfter.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMM yyyy"))
+    Column(Modifier.fillMaxWidth().border(2.dp, Ink).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Certificate for ${certificate.host}", fontWeight = FontWeight.Bold)
+        Text("Subject: ${certificate.subject}", fontSize = 13.sp)
+        Text("Issuer: ${certificate.issuer}", fontSize = 13.sp)
+        Text("Valid until: $expiry", fontSize = 13.sp)
+        Text("SHA-256 fingerprint", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(certificate.sha256, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(
+            if (certificate.systemTrusted) {
+                "Android already trusts this certificate, so trusting it here is not required."
+            } else {
+                "Only trust it if this fingerprint matches the one on your server."
+            },
+            color = if (certificate.systemTrusted) MutedInk else Warning,
+            fontSize = 13.sp
+        )
+    }
 }
 
 @Composable
