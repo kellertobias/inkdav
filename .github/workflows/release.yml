@@ -68,6 +68,42 @@ jobs:
           test -n "$SIGNING_KEY_BASE64"
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/inkdav-release.p12"
 
+      - name: Prepare one-time installed-data signing migration
+        if: vars.SIGNING_MIGRATION_ENABLED == 'true'
+        env:
+          DEBUG_SIGNING_KEY_BASE64: ${{ secrets.INKDAV_DEBUG_SIGNING_KEY_BASE64 }}
+          INKDAV_KEYSTORE_PASSWORD: ${{ secrets.INKDAV_KEYSTORE_PASSWORD }}
+          INKDAV_KEY_ALIAS: ${{ secrets.INKDAV_KEY_ALIAS }}
+          INKDAV_KEY_PASSWORD: ${{ secrets.INKDAV_KEY_PASSWORD }}
+          INKDAV_OLD_KEYSTORE_PASSWORD: android
+          INKDAV_OLD_KEY_PASSWORD: android
+        run: |
+          test -n "$DEBUG_SIGNING_KEY_BASE64"
+          printf '%s' "$DEBUG_SIGNING_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/inkdav-debug.jks"
+          apksigner rotate \
+            --out "$RUNNER_TEMP/inkdav-installed-data.lineage" \
+            --old-signer \
+            --ks "$RUNNER_TEMP/inkdav-debug.jks" \
+            --ks-type JKS \
+            --ks-key-alias androiddebugkey \
+            --ks-pass env:INKDAV_OLD_KEYSTORE_PASSWORD \
+            --key-pass env:INKDAV_OLD_KEY_PASSWORD \
+            --set-installed-data true \
+            --set-shared-uid false \
+            --set-permission false \
+            --set-rollback false \
+            --set-auth false \
+            --new-signer \
+            --ks "$RUNNER_TEMP/inkdav-release.p12" \
+            --ks-type PKCS12 \
+            --ks-key-alias "$INKDAV_KEY_ALIAS" \
+            --ks-pass env:INKDAV_KEYSTORE_PASSWORD \
+            --key-pass env:INKDAV_KEY_PASSWORD
+          {
+            echo "INKDAV_SIGNING_LINEAGE_FILE=$RUNNER_TEMP/inkdav-installed-data.lineage"
+            echo "INKDAV_OLD_KEYSTORE_FILE=$RUNNER_TEMP/inkdav-debug.jks"
+          } >> "$GITHUB_ENV"
+
       - name: Verify and publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,4 +112,8 @@ jobs:
           INKDAV_KEYSTORE_PASSWORD: ${{ secrets.INKDAV_KEYSTORE_PASSWORD }}
           INKDAV_KEY_ALIAS: ${{ secrets.INKDAV_KEY_ALIAS }}
           INKDAV_KEY_PASSWORD: ${{ secrets.INKDAV_KEY_PASSWORD }}
+          INKDAV_OLD_KEYSTORE_TYPE: JKS
+          INKDAV_OLD_KEY_ALIAS: androiddebugkey
+          INKDAV_OLD_KEYSTORE_PASSWORD: android
+          INKDAV_OLD_KEY_PASSWORD: android
         run: npm run release

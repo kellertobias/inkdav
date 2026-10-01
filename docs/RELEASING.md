@@ -21,6 +21,15 @@ gh variable set RELEASES_ENABLED --body true
 
 Store the keystore and passwords in a separate offline backup. Do not enable releases until all four secrets exist. GitHub's ephemeral repository token needs permission to create release commits, tags, and releases; branch or tag protection may require an explicitly approved narrow release credential instead.
 
+For a controlled migration from a previously installed local debug build, the
+release workflow can optionally consume `INKDAV_DEBUG_SIGNING_KEY_BASE64` when
+the repository variable `SIGNING_MIGRATION_ENABLED` is `true`. The resulting
+APK signing lineage grants the old certificate only the installed-data
+capability. It explicitly does not grant rollback, signature-permission,
+shared-UID, or authenticator capabilities. Disable the variable again after the
+affected Android 9+ installations have moved to the release signer; ordinary
+releases then return to release-key-only signing.
+
 ## Verify without publishing
 
 Install Node 24 dependencies and preview the next release from complete Git history:
